@@ -177,7 +177,7 @@ def main():
             
     risk_df = pd.DataFrame(map_rows)
 
-    # --- 4. VISUALIZATION: LAYER 1 (THE MAP) ---
+# --- 4. VISUALIZATION: LAYER 1 (THE MAP) ---
     col_map, col_details = st.columns([2, 1])
     
     with col_map:
@@ -198,6 +198,14 @@ def main():
                 # Merge Data
                 merged = state_gdf.merge(risk_df, left_on='DIST_CLEAN', right_on='District', how='left')
                 merged['Risk Score'] = merged['Risk Score'].fillna(0)
+                
+                # --- CRITICAL FIX: Rename column for Hover ---
+                # Pandas renames duplicate columns to _x and _y. We rename it back so Plotly finds 'District'
+                if 'District_x' in merged.columns:
+                    merged = merged.rename(columns={'District_x': 'District'})
+                elif 'DIST_CLEAN' in merged.columns:
+                    merged['District'] = merged['DIST_CLEAN']
+                # ---------------------------------------------
                 
                 # Plot Map
                 fig = px.choropleth_mapbox(
@@ -283,4 +291,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
