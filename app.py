@@ -97,11 +97,21 @@ def load_data():
 def load_shapefile():
     shp_files = glob.glob("*.shp")
     if shp_files:
-        gdf = gpd.read_file(shp_files[0])
-        # Ensure standard coordinate system for web maps
-        if gdf.crs != "EPSG:4326":
-            gdf = gdf.to_crs(epsg=4326)
-        return gdf
+        try:
+            gdf = gpd.read_file(shp_files[0])
+            
+            # --- THE FIX IS HERE ---
+            if gdf.crs is None:
+                # If the map has no projection, force it to be standard Lat/Lon (WGS84)
+                gdf.set_crs(epsg=4326, inplace=True)
+            elif gdf.crs != "EPSG:4326":
+                # Only convert if it has a projection AND it's different
+                gdf = gdf.to_crs(epsg=4326)
+                
+            return gdf
+        except Exception as e:
+            st.error(f"Error loading map: {e}")
+            return None
     return None
 
 # ================= MAIN APP =================
@@ -273,3 +283,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
