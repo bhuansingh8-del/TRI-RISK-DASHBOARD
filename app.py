@@ -27,10 +27,20 @@ def clean_label(text):
 
 def get_indicators(district_name, indicators_df):
     if indicators_df is None: return None
-    clean_dist = str(district_name).upper().strip().replace(" ", "")
-    indicators_df['MATCH_KEY'] = indicators_df['District'].astype(str).str.upper().str.strip().str.replace(" ", "")
+    # Robust matching for indicators
+    clean_dist = str(district_name).upper().strip().replace(" ", "").replace("-", "")
+    indicators_df['MATCH_KEY'] = indicators_df['District'].astype(str).str.upper().str.strip().str.replace(" ", "").str.replace("-", "")
+    
+    # Try exact match first
     row = indicators_df[indicators_df['MATCH_KEY'] == clean_dist]
     if not row.empty: return row.iloc[0]
+    
+    # Try fuzzy match if exact fails
+    all_keys = indicators_df['MATCH_KEY'].unique()
+    matches = difflib.get_close_matches(clean_dist, all_keys, n=1, cutoff=0.7)
+    if matches:
+        return indicators_df[indicators_df['MATCH_KEY'] == matches[0]].iloc[0]
+        
     return None
 
 def generate_enhanced_narrative(row, score, indicators):
@@ -170,57 +180,75 @@ def main():
                 # 1. Clean Map Names
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf[dist_col].astype(str).str.upper().str.replace("DISTRICT", "").str.replace("DT", "").str.strip()
                 
-                # 2. Fix Broken Map Names (The "S|T>PUR" Fix)
-                MAP_FIXES = {
+                # 2. UNIVERSAL FIXES (Add any broken names here)
+                UNIVERSAL_FIXES = {
                     "S|T>PUR": "SITAPUR",
                     "SITAPUR": "SITAPUR",
                     "KHERI": "LAKHIMPUR KHERI", 
                     "LAKHIMPUR": "LAKHIMPUR KHERI",
                     "RAE BARELI": "RAE BARELI",
-                    # Guesses for corrupted names
+                    "BHADOHI": "SANT RAVIDAS NAGAR",
+                    "SANT RAVIDAS NAGAR": "BHADOHI", # Flip if needed
+                    "SIDDHARTH NAGAR": "SIDDHARTHNAGAR",
+                    "KUSHI NAGAR": "KUSHINAGAR",
+                    "AMROHA": "JYOTIBA PHULE NAGAR",
+                    "HATHRAS": "MAHAMAYA NAGAR",
+                    "KASGANJ": "KANSHIRAM NAGAR",
+                    "SAMBHAL": "BHIM NAGAR",
+                    "SHAMLI": "PRABUDDH NAGAR",
+                    "HAPUR": "PANCHSHEEL NAGAR",
+                    # Corruption Guesses
                     "CH>ND>ULI": "CHANDAULI",
                     "CH|ND>UL|": "CHANDAULI",
                     "PR>T>PG>RH": "PRATAPGARH",
-                    "PR|T>PG|RH": "PRATAPGARH"
+                    "PR|T>PG|RH": "PRATAPGARH",
+                    "SHRAWASTI": "SHRAVASTI"
                 }
-                state_gdf['CLEAN_MAP_NAME'] = state_gdf['CLEAN_MAP_NAME'].replace(MAP_FIXES)
+                state_gdf['CLEAN_MAP_NAME'] = state_gdf['CLEAN_MAP_NAME'].replace(UNIVERSAL_FIXES)
                 
                 # --- 🛠️ EXCEL NAME CLEANING 🛠️ ---
                 risk_df['CLEAN_EXCEL_NAME'] = risk_df['Excel_District'].astype(str).str.upper().str.strip()
                 
-                # 3. Fix Excel Names (The "Lakhimpur" Fix)
-                EXCEL_FIXES = {
-                    "LAKHIMPUR": "LAKHIMPUR KHERI",
-                    "KHERI": "LAKHIMPUR KHERI",
-                    "BHADOHI": "SANT RAVIDAS NAGAR" # Common mismatch
-                }
-                risk_df['CLEAN_EXCEL_NAME'] = risk_df['CLEAN_EXCEL_NAME'].replace(EXCEL_FIXES)
+                # 3. Apply fixes to Excel side too (just in case)
+                risk_df['CLEAN_EXCEL_NAME'] = risk_df['CLEAN_EXCEL_NAME'].replace(UNIVERSAL_FIXES)
                 
                 # 4. Match Logic
                 map_names = state_gdf['CLEAN_MAP_NAME'].unique()
                 mapping = {}
                 
                 for excel_name in risk_df['CLEAN_EXCEL_NAME'].unique():
-                    # Exact Match
                     if excel_name in map_names:
                         mapping[excel_name] = excel_name
                     else:
-                        # Fuzzy Match
-                        closest = difflib.get_close_matches(excel_name, map_names, n=1, cutoff=0.6)
+                        closest = difflib.get_close_matches(excel_name, map_names, n=1, cutoff=0.7)
                         if closest: mapping[excel_name] = closest[0]
                         else: mapping[excel_name] = None
                 
                 risk_df['MERGE_KEY'] = risk_df['CLEAN_EXCEL_NAME'].map(mapping)
+                
+                # 5. Merge
                 merged = state_gdf.merge(risk_df, left_on='CLEAN_MAP_NAME', right_on='MERGE_KEY', how='left')
+                
+                # 6. FIX NULL HOVER LABELS
+                # If Excel data is missing, fallback to Map name so it doesn't say "null"
+                merged['Display_Label'] = merged['Excel_District'].fillna(merged['CLEAN_MAP_NAME'])
                 merged['Risk Score'] = merged['Risk Score'].fillna(0)
                 
-                # --- 🕵️ DETECTIVE MODE (UPDATED) ---
-                # Show ALL unmatched districts so you can see the corrupted names
-                unmatched_map_districts = merged[merged['Risk Score'] == 0]['CLEAN_MAP_NAME'].unique()
-                with st.expander("🕵️ Map Name Detective (Open to see Broken Names)"):
-                    st.write("These map districts matched NOTHING. Look for corrupted text like 'S|T>PUR':")
-                    st.write(sorted(unmatched_map_districts))
-                # ------------------------
+                # --- 🕵️ DOUBLE DETECTIVE MODE ---
+                # Show BOTH sides of the mismatch so you can see the difference
+                unmatched_map = merged[merged['Risk Score'] == 0]['CLEAN_MAP_NAME'].unique()
+                unmatched_excel = risk_df[risk_df['MERGE_KEY'].isna()]['CLEAN_EXCEL_NAME'].unique()
+                
+                if len(unmatched_map) > 0 or len(unmatched_excel) > 0:
+                    with st.expander("🕵️ Name Detective (Open to fix broken districts)"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.error(f"❌ Map districts with no data ({len(unmatched_map)}):")
+                            st.write(sorted(unmatched_map))
+                        with col2:
+                            st.warning(f"⚠️ Excel districts with no map match ({len(unmatched_excel)}):")
+                            st.write(sorted(unmatched_excel))
+                        st.caption("Tip: Add mismatches to 'UNIVERSAL_FIXES' in the code.")
 
                 # --- PLOT MAP ---
                 fig = px.choropleth_mapbox(
@@ -230,7 +258,7 @@ def main():
                     range_color=(0, 100),
                     mapbox_style="carto-positron", zoom=5.5,
                     center={"lat": merged.geometry.centroid.y.mean(), "lon": merged.geometry.centroid.x.mean()},
-                    hover_name='Excel_District', 
+                    hover_name='Display_Label', # Uses the fallback label
                     hover_data={'Risk Score': True, 'Rainfall (mm)': True}
                 )
                 fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, clickmode='event+select')
@@ -239,9 +267,20 @@ def main():
                 
                 if event and "selection" in event and event["selection"]["points"]:
                     point_index = event["selection"]["points"][0]["point_index"]
-                    clicked_district = merged.iloc[point_index]['Excel_District']
-                    if pd.notna(clicked_district) and clicked_district in district_list:
-                        st.session_state.selected_district_click = clicked_district
+                    clicked_district = merged.iloc[point_index]['Display_Label'] # Use display label
+                    
+                    # Fuzzy match the clicked label back to the Excel list for the dropdown
+                    if pd.notna(clicked_district):
+                         # Try exact match
+                        if clicked_district in district_list:
+                             st.session_state.selected_district_click = clicked_district
+                        else:
+                             # Try finding it in the excel map keys
+                             match = difflib.get_close_matches(clicked_district.upper(), [d.upper() for d in district_list], n=1)
+                             if match:
+                                 # Find original case
+                                 orig = next(d for d in district_list if d.upper() == match[0])
+                                 st.session_state.selected_district_click = orig
 
             else:
                 st.warning(f"Could not match state '{selected_state}' in shapefile.")
