@@ -103,7 +103,7 @@ def main():
     st.markdown("### Integrated Hazard, Vulnerability & Coping Capacity Assessment")
     st.divider()
 
-    # --- SESSION STATE (For Click Interaction) ---
+    # --- SESSION STATE ---
     if 'selected_district_click' not in st.session_state:
         st.session_state.selected_district_click = None
 
@@ -152,7 +152,6 @@ def main():
         gdf = load_shapefile()
         
         if gdf is not None and not risk_df.empty:
-            # Match State
             state_col = 'STATE' if 'STATE' in gdf.columns else 'ST_NM'
             map_states = gdf[state_col].unique()
             match = difflib.get_close_matches(selected_state.upper(), [str(x).upper() for x in map_states], n=1)
@@ -171,18 +170,18 @@ def main():
                 # 1. Clean Map Names
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf[dist_col].astype(str).str.upper().str.replace("DISTRICT", "").str.replace("DT", "").str.strip()
                 
-                # 2. Fix Broken Names (This fixes S|T>PUR)
+                # 2. Fix Broken Names (Including KHERI fix)
                 MANUAL_FIXES = {
                     "S|T>PUR": "SITAPUR",
+                    "KHERI": "LAKHIMPUR KHERI", # Likely Fix for Lakhimpur
+                    "LAKHIMPUR": "LAKHIMPUR KHERI",
                     "CHANDAULI": "CHANDAULI", 
                     "PRATAPGARH": "PRATAPGARH",
-                    "KHERI": "LAKHIMPUR KHERI",
-                    "LAKHIMPUR": "LAKHIMPUR KHERI",
                     "RAE BARELI": "RAE BARELI"
                 }
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf['CLEAN_MAP_NAME'].replace(MANUAL_FIXES)
                 
-                # 3. Match Logic (Simplifed to avoid Indentation Errors)
+                # 3. Match Logic
                 risk_df['CLEAN_EXCEL_NAME'] = risk_df['Excel_District'].astype(str).str.upper().str.strip()
                 map_names = state_gdf['CLEAN_MAP_NAME'].unique()
                 mapping = {}
@@ -192,15 +191,21 @@ def main():
                         mapping[excel_name] = excel_name
                     else:
                         closest = difflib.get_close_matches(excel_name, map_names, n=1, cutoff=0.6)
-                        if closest:
-                            mapping[excel_name] = closest[0]
-                        else:
-                            mapping[excel_name] = None
+                        if closest: mapping[excel_name] = closest[0]
+                        else: mapping[excel_name] = None
                 
                 risk_df['MERGE_KEY'] = risk_df['CLEAN_EXCEL_NAME'].map(mapping)
                 merged = state_gdf.merge(risk_df, left_on='CLEAN_MAP_NAME', right_on='MERGE_KEY', how='left')
                 merged['Risk Score'] = merged['Risk Score'].fillna(0)
                 
+                # --- 🕵️ DETECTIVE MODE ---
+                # This will show you exactly what the unmatched districts are named in the map
+                unmatched_map_districts = merged[merged['Risk Score'] == 0]['CLEAN_MAP_NAME'].unique()
+                with st.expander("🕵️ Map Name Detective (Check here for broken names)"):
+                    st.write("These map districts have no data (Risk Score 0). Check their spelling:")
+                    st.write(unmatched_map_districts)
+                # ------------------------
+
                 # --- PLOT MAP ---
                 fig = px.choropleth_mapbox(
                     merged, geojson=merged.geometry, locations=merged.index,
@@ -214,7 +219,6 @@ def main():
                 )
                 fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, clickmode='event+select')
                 
-                # Capture Click
                 event = st.plotly_chart(fig, use_container_width=True, key=f"map_{risk_type}_{selected_state}", on_select="rerun")
                 
                 if event and "selection" in event and event["selection"]["points"]:
@@ -229,7 +233,6 @@ def main():
     with col_details:
         st.subheader("🧐 Detailed Risk Diagnostics")
         
-        # Determine selection (Click vs Dropdown)
         default_index = 0
         if st.session_state.selected_district_click in district_list:
             default_index = district_list.index(st.session_state.selected_district_click)
