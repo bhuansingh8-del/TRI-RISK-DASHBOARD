@@ -118,7 +118,7 @@ def main():
     st.sidebar.header("📍 Location & Time")
     selected_state = st.sidebar.selectbox("Select State", list(data_map.keys()))
     state_data = data_map[selected_state]
-    district_list = list(state_data.keys()) # Excel Districts
+    district_list = list(state_data.keys()) 
 
     col_y, col_m = st.sidebar.columns(2)
     with col_y: year = st.selectbox("Year", [2026, 2025, 2024], index=0)
@@ -171,27 +171,111 @@ def main():
                 # 1. Clean Map Names
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf[dist_col].astype(str).str.upper().str.replace("DISTRICT", "").str.replace("DT", "").str.strip()
                 
-                # 2. Apply Specific Fixes (Map Name -> Correct Name)
-                # If the map says "S|T>PUR", we force it to match "SITAPUR"
+                # 2. Fix Broken Names (This fixes S|T>PUR)
                 MANUAL_FIXES = {
                     "S|T>PUR": "SITAPUR",
                     "CHANDAULI": "CHANDAULI", 
                     "PRATAPGARH": "PRATAPGARH",
-                    "KHERI": "LAKHIMPUR KHERI", # Common mismatch
+                    "KHERI": "LAKHIMPUR KHERI",
                     "LAKHIMPUR": "LAKHIMPUR KHERI",
                     "RAE BARELI": "RAE BARELI"
                 }
-                # Apply fixes: If name is in dictionary, replace it. Else keep original.
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf['CLEAN_MAP_NAME'].replace(MANUAL_FIXES)
                 
-                # 3. Fuzzy Match
+                # 3. Match Logic (Simplifed to avoid Indentation Errors)
                 risk_df['CLEAN_EXCEL_NAME'] = risk_df['Excel_District'].astype(str).str.upper().str.strip()
                 map_names = state_gdf['CLEAN_MAP_NAME'].unique()
                 mapping = {}
                 
                 for excel_name in risk_df['CLEAN_EXCEL_NAME'].unique():
-                    # Try Exact Match First (Manual fixes help here)
                     if excel_name in map_names:
                         mapping[excel_name] = excel_name
                     else:
-                        # Try
+                        closest = difflib.get_close_matches(excel_name, map_names, n=1, cutoff=0.6)
+                        if closest:
+                            mapping[excel_name] = closest[0]
+                        else:
+                            mapping[excel_name] = None
+                
+                risk_df['MERGE_KEY'] = risk_df['CLEAN_EXCEL_NAME'].map(mapping)
+                merged = state_gdf.merge(risk_df, left_on='CLEAN_MAP_NAME', right_on='MERGE_KEY', how='left')
+                merged['Risk Score'] = merged['Risk Score'].fillna(0)
+                
+                # --- PLOT MAP ---
+                fig = px.choropleth_mapbox(
+                    merged, geojson=merged.geometry, locations=merged.index,
+                    color='Risk Score', 
+                    color_continuous_scale=["#00ff00", "#ffff00", "#ff0000"],
+                    range_color=(0, 100),
+                    mapbox_style="carto-positron", zoom=5.5,
+                    center={"lat": merged.geometry.centroid.y.mean(), "lon": merged.geometry.centroid.x.mean()},
+                    hover_name='Excel_District', 
+                    hover_data={'Risk Score': True, 'Rainfall (mm)': True}
+                )
+                fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, clickmode='event+select')
+                
+                # Capture Click
+                event = st.plotly_chart(fig, use_container_width=True, key=f"map_{risk_type}_{selected_state}", on_select="rerun")
+                
+                if event and "selection" in event and event["selection"]["points"]:
+                    point_index = event["selection"]["points"][0]["point_index"]
+                    clicked_district = merged.iloc[point_index]['Excel_District']
+                    if pd.notna(clicked_district) and clicked_district in district_list:
+                        st.session_state.selected_district_click = clicked_district
+
+            else:
+                st.warning(f"Could not match state '{selected_state}' in shapefile.")
+
+    with col_details:
+        st.subheader("🧐 Detailed Risk Diagnostics")
+        
+        # Determine selection (Click vs Dropdown)
+        default_index = 0
+        if st.session_state.selected_district_click in district_list:
+            default_index = district_list.index(st.session_state.selected_district_click)
+            
+        selected_dist_map = st.selectbox("Select District for Analysis", district_list, index=default_index)
+        
+        if selected_dist_map:
+            d_df = state_data[selected_dist_map]
+            row = d_df[d_df['Week'] == target_week]
+            
+            if not row.empty:
+                r = row.iloc[0]
+                curr_score = r.get(risk_type, 0)
+                indicators = get_indicators(selected_dist_map, indicators_df)
+                
+                st.metric(label=f"Total {clean_risk_name}", value=f"{curr_score:.1f}%", 
+                          delta="Critical" if curr_score > 80 else "Normal", delta_color="inverse")
+                st.markdown("---")
+                
+                st.markdown("### 📝 Impact Analysis")
+                narratives = generate_enhanced_narrative(r, curr_score, indicators)
+                for n in narratives: st.markdown(n, unsafe_allow_html=True)
+                
+                if indicators is not None:
+                    st.markdown("#### 📊 District Profile")
+                    i_col1, i_col2 = st.columns(2)
+                    with i_col1:
+                        st.caption("Kuccha Houses")
+                        st.write(f"**{indicators.get('Kuccha_House_Pct', 0):.1f}%**")
+                        st.caption("Farming Workforce")
+                        st.write(f"**{indicators.get('Agri_Workers_Pct', 0):.1f}%**")
+                    with i_col2:
+                        st.caption("Mobile Coverage")
+                        st.write(f"**{indicators.get('Mobile_Coverage_Pct', 0):.1f}%**")
+                        st.caption("Irrigation")
+                        st.write(f"**{indicators.get('Irrigation_Coverage_Pct', 0):.1f}%**")
+
+    # --- TRENDS ---
+    st.markdown("---")
+    st.subheader(f"📈 52-Week Risk Trend: {clean_label(selected_dist_map) if selected_dist_map else ''}")
+    if selected_dist_map:
+        trend_df = state_data[selected_dist_map]
+        fig_line = px.line(trend_df, x='Week', y=risk_type, markers=True, title=f"Annual Risk Profile: {selected_dist_map}")
+        fig_line.add_hline(y=60, line_dash="dot", annotation_text="High Risk")
+        fig_line.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Critical")
+        st.plotly_chart(fig_line, use_container_width=True)
+
+if __name__ == "__main__":
+    main()
