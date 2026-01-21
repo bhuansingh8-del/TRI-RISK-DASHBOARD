@@ -166,30 +166,46 @@ def main():
                         dist_col = candidate
                         break
 
-                # --- 🛠️ MANUAL REPAIR SHOP 🛠️ ---
+                # --- 🛠️ MAP NAME CLEANING 🛠️ ---
                 # 1. Clean Map Names
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf[dist_col].astype(str).str.upper().str.replace("DISTRICT", "").str.replace("DT", "").str.strip()
                 
-                # 2. Fix Broken Names (Including KHERI fix)
-                MANUAL_FIXES = {
+                # 2. Fix Broken Map Names (The "S|T>PUR" Fix)
+                MAP_FIXES = {
                     "S|T>PUR": "SITAPUR",
-                    "KHERI": "LAKHIMPUR KHERI", # Likely Fix for Lakhimpur
+                    "SITAPUR": "SITAPUR",
+                    "KHERI": "LAKHIMPUR KHERI", 
                     "LAKHIMPUR": "LAKHIMPUR KHERI",
-                    "CHANDAULI": "CHANDAULI", 
-                    "PRATAPGARH": "PRATAPGARH",
-                    "RAE BARELI": "RAE BARELI"
+                    "RAE BARELI": "RAE BARELI",
+                    # Guesses for corrupted names
+                    "CH>ND>ULI": "CHANDAULI",
+                    "CH|ND>UL|": "CHANDAULI",
+                    "PR>T>PG>RH": "PRATAPGARH",
+                    "PR|T>PG|RH": "PRATAPGARH"
                 }
-                state_gdf['CLEAN_MAP_NAME'] = state_gdf['CLEAN_MAP_NAME'].replace(MANUAL_FIXES)
+                state_gdf['CLEAN_MAP_NAME'] = state_gdf['CLEAN_MAP_NAME'].replace(MAP_FIXES)
                 
-                # 3. Match Logic
+                # --- 🛠️ EXCEL NAME CLEANING 🛠️ ---
                 risk_df['CLEAN_EXCEL_NAME'] = risk_df['Excel_District'].astype(str).str.upper().str.strip()
+                
+                # 3. Fix Excel Names (The "Lakhimpur" Fix)
+                EXCEL_FIXES = {
+                    "LAKHIMPUR": "LAKHIMPUR KHERI",
+                    "KHERI": "LAKHIMPUR KHERI",
+                    "BHADOHI": "SANT RAVIDAS NAGAR" # Common mismatch
+                }
+                risk_df['CLEAN_EXCEL_NAME'] = risk_df['CLEAN_EXCEL_NAME'].replace(EXCEL_FIXES)
+                
+                # 4. Match Logic
                 map_names = state_gdf['CLEAN_MAP_NAME'].unique()
                 mapping = {}
                 
                 for excel_name in risk_df['CLEAN_EXCEL_NAME'].unique():
+                    # Exact Match
                     if excel_name in map_names:
                         mapping[excel_name] = excel_name
                     else:
+                        # Fuzzy Match
                         closest = difflib.get_close_matches(excel_name, map_names, n=1, cutoff=0.6)
                         if closest: mapping[excel_name] = closest[0]
                         else: mapping[excel_name] = None
@@ -198,12 +214,12 @@ def main():
                 merged = state_gdf.merge(risk_df, left_on='CLEAN_MAP_NAME', right_on='MERGE_KEY', how='left')
                 merged['Risk Score'] = merged['Risk Score'].fillna(0)
                 
-                # --- 🕵️ DETECTIVE MODE ---
-                # This will show you exactly what the unmatched districts are named in the map
+                # --- 🕵️ DETECTIVE MODE (UPDATED) ---
+                # Show ALL unmatched districts so you can see the corrupted names
                 unmatched_map_districts = merged[merged['Risk Score'] == 0]['CLEAN_MAP_NAME'].unique()
-                with st.expander("🕵️ Map Name Detective (Check here for broken names)"):
-                    st.write("These map districts have no data (Risk Score 0). Check their spelling:")
-                    st.write(unmatched_map_districts)
+                with st.expander("🕵️ Map Name Detective (Open to see Broken Names)"):
+                    st.write("These map districts matched NOTHING. Look for corrupted text like 'S|T>PUR':")
+                    st.write(sorted(unmatched_map_districts))
                 # ------------------------
 
                 # --- PLOT MAP ---
