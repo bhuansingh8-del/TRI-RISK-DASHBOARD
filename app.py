@@ -8,7 +8,7 @@ import warnings
 import difflib
 from datetime import datetime, timedelta
 
-# 1. Suppress Warnings
+# 1. Suppress Warnings for cleaner output
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="TRI Risk Decision Support System", layout="wide", page_icon="🛡️")
 
@@ -33,6 +33,7 @@ def get_indicators(district_name, indicators_df):
     
     # Normalize names for matching (remove spaces, uppercase)
     clean_dist = str(district_name).upper().strip().replace(" ", "")
+    # Create a match key in the dataframe on the fly
     indicators_df['MATCH_KEY'] = indicators_df['District'].astype(str).str.upper().str.strip().str.replace(" ", "")
     
     row = indicators_df[indicators_df['MATCH_KEY'] == clean_dist]
@@ -41,12 +42,10 @@ def get_indicators(district_name, indicators_df):
     return None
 
 def generate_enhanced_narrative(row, score, indicators):
-    """
-    Generates a detailed, data-driven explanation of the risk.
-    """
+    """Generates the 'Why is this happening?' text."""
     narrative = []
     
-    # --- 1. HAZARD ANALYSIS (The "What") ---
+    # --- 1. HAZARD ANALYSIS (The Trigger) ---
     rain_val = row.get('Precipitation', 0)
     heat_val = row.get('Wet_Bulb', 0)
     
@@ -54,62 +53,62 @@ def generate_enhanced_narrative(row, score, indicators):
         narrative.append(f"""
         <div class='explanation-box' style='border-left-color: #dc3545;'>
             <strong>🔥 Severe Hazard (Trigger):</strong><br>
-            Heavy rainfall of <b>{rain_val:.1f} mm</b> has been detected this week. 
-            This is above the heavy rain threshold, creating an immediate flood threat.
+            Heavy rainfall of <b>{rain_val:.1f} mm</b> detected this week. 
+            This exceeds the heavy flood threshold (64.5mm).
         </div>
         """)
     elif heat_val > 30:
         narrative.append(f"""
         <div class='explanation-box' style='border-left-color: #fd7e14;'>
             <strong>🔥 Severe Hazard (Trigger):</strong><br>
-            Dangerous Heat Stress conditions detected (Wet Bulb: <b>{heat_val:.1f}°C</b>). 
-            At this level, the human body struggles to cool down via sweating.
+            Dangerous Heat Stress (Wet Bulb: <b>{heat_val:.1f}°C</b>). 
+            Human body cooling mechanisms are compromised at this level.
         </div>
         """)
     elif score < 30:
         narrative.append(f"""
         <div class='explanation-box' style='border-left-color: #28a745;'>
             <strong>✅ Low Hazard:</strong><br>
-            Weather conditions are within normal limits (Rain: {rain_val:.1f}mm, Wet Bulb: {heat_val:.1f}°C).
+            Weather conditions are within normal limits.
         </div>
         """)
 
-    # --- 2. VULNERABILITY ANALYSIS (The "Why it hurts") ---
+    # --- 2. VULNERABILITY ANALYSIS (The Multiplier) ---
     if indicators is not None and score > 40:
         kuccha = indicators.get('Kuccha_House_Pct', 0)
         farmers = indicators.get('Agri_Workers_Pct', 0)
         
         vuln_text = ""
         if kuccha > 30:
-            vuln_text += f"<li><b>{kuccha:.1f}% of houses are Kuccha (weak structure)</b>, making them highly prone to collapse or damage.</li>"
+            vuln_text += f"<li><b>{kuccha:.1f}% of houses are Kuccha</b> (weak structure).</li>"
         if farmers > 50:
-            vuln_text += f"<li><b>{farmers:.1f}% of the workforce are farmers</b>, meaning their livelihoods are directly exposed to this weather.</li>"
+            vuln_text += f"<li><b>{farmers:.1f}% of the workforce are farmers</b> (livelihood exposure).</li>"
             
         if vuln_text:
             narrative.append(f"""
             <div class='explanation-box' style='border-left-color: #ffc107;'>
-                <strong>⚠️ Vulnerability Factors (The Multiplier):</strong><br>
-                The risk is amplified because of local socio-economic conditions:
+                <strong>⚠️ Vulnerability Factors:</strong><br>
+                Risk is amplified by local conditions:
                 <ul>{vuln_text}</ul>
             </div>
             """)
 
-    # --- 3. COPING CAPACITY (The "Defense") ---
+    # --- 3. COPING CAPACITY (The Defense) ---
     if indicators is not None and score > 60:
         mobile = indicators.get('Mobile_Coverage_Pct', 0)
         irrigation = indicators.get('Irrigation_Coverage_Pct', 0)
         
         coping_text = ""
         if mobile < 70:
-            coping_text += f"<li><b>Mobile coverage is low ({mobile:.1f}%)</b>, which severely limits the effectiveness of SMS-based early warning systems.</li>"
+            coping_text += f"<li><b>Low Mobile Coverage ({mobile:.1f}%)</b> limits early warning reach.</li>"
         if irrigation < 30 and heat_val > 28:
-            coping_text += f"<li><b>Irrigation coverage is low ({irrigation:.1f}%)</b>, leaving crops with no buffer against this heat stress.</li>"
+            coping_text += f"<li><b>Low Irrigation ({irrigation:.1f}%)</b> increases crop heat stress.</li>"
             
         if coping_text:
             narrative.append(f"""
             <div class='explanation-box' style='border-left-color: #17a2b8;'>
-                <strong>🛡️ Coping Gap (The Defense):</strong><br>
-                Local capacity to respond is compromised:
+                <strong>🛡️ Coping Gap:</strong><br>
+                Response capacity is limited:
                 <ul>{coping_text}</ul>
             </div>
             """)
@@ -146,7 +145,7 @@ def load_shapefile():
     if shp_files:
         try:
             gdf = gpd.read_file(shp_files[0])
-            # Handle CRS (Projection) issues automatically
+            # Fix Missing Projection (The .prj error)
             if gdf.crs is None:
                 gdf.set_crs(epsg=4326, inplace=True)
             elif gdf.crs != "EPSG:4326":
@@ -162,12 +161,12 @@ def main():
     st.markdown("### Integrated Hazard, Vulnerability & Coping Capacity Assessment")
     st.divider()
 
-    # --- LOAD ALL DATA ---
+    # --- LOAD DATA ---
     data_map = load_data()
     indicators_df = load_indicators()
     
     if not data_map:
-        st.error("🚨 No '_FINAL.xlsx' files found.")
+        st.error("🚨 No '_FINAL.xlsx' files found. Please run 'master_processor.py' first.")
         st.stop()
 
     # --- SIDEBAR ---
@@ -190,7 +189,6 @@ def main():
     
     st.sidebar.info(f"📅 **Selected:** {selected_date.strftime('%d %b %Y')}\n\n📊 **Week:** {target_week}")
 
-    # Risk Type Selector (Matches Excel Column Names)
     risk_type = st.sidebar.radio(
         "Visualize Risk:", 
         ["Extreme_Rain_Prob_%", "Heat_Prob_%"],
@@ -210,7 +208,6 @@ def main():
                 'Risk Score': float(val),
                 'Rainfall (mm)': f"{rain_amt:.1f}"
             })
-            
     risk_df = pd.DataFrame(map_rows)
 
     # --- LAYOUT ---
@@ -219,36 +216,55 @@ def main():
     with col_map:
         st.subheader(f"🗺️ State Risk Map: {clean_risk_name}")
         gdf = load_shapefile()
+        
         if gdf is not None and not risk_df.empty:
-            map_states = gdf['STATE'].unique()
+            # 1. Match State (Fuzzy Logic)
+            state_col = 'STATE' if 'STATE' in gdf.columns else 'ST_NM'
+            map_states = gdf[state_col].unique()
             match = difflib.get_close_matches(selected_state.upper(), [str(x).upper() for x in map_states], n=1)
             
             if match:
-                state_gdf = gdf[gdf['STATE'].str.upper() == match[0]].copy()
-                state_gdf['DIST_CLEAN'] = state_gdf['District'].str.upper().str.strip()
+                state_gdf = gdf[gdf[state_col].str.upper() == match[0]].copy()
                 
-                merged = state_gdf.merge(risk_df, left_on='DIST_CLEAN', right_on='District', how='left')
-                merged['Risk Score'] = merged['Risk Score'].fillna(0)
+                # 2. Find District Column
+                dist_col = 'District'
+                for candidate in ['District', 'DISTRICT', 'DIST_NAME', 'dtname', 'dist_name']:
+                    if candidate in state_gdf.columns:
+                        dist_col = candidate
+                        break
+
+                # 3. Clean Keys & Merge
+                state_gdf['MATCH_KEY'] = state_gdf[dist_col].astype(str).str.upper().str.strip()
+                risk_df['MATCH_KEY'] = risk_df['District'].astype(str).str.upper().str.strip()
                 
-                # Column Rename Fix (Handles District_x vs District)
-                if 'District_x' in merged.columns: merged = merged.rename(columns={'District_x': 'District'})
-                elif 'DIST_CLEAN' in merged.columns: merged['District'] = merged['DIST_CLEAN']
+                merged = state_gdf.merge(risk_df, on='MATCH_KEY', how='left')
+                merged['Risk Score'] = merged['Risk Score'].fillna(0) # 0 = Safe (Green)
                 
-                # Plot Map (FIXED COLORS & KEY)
+                # 4. Set Label for Hover
+                if dist_col in merged.columns:
+                    merged['District_Label'] = merged[dist_col]
+                else:
+                    merged['District_Label'] = merged['MATCH_KEY']
+
+                # 5. Plot Map (With Fixed Colors)
                 fig = px.choropleth_mapbox(
                     merged, geojson=merged.geometry, locations=merged.index,
                     color='Risk Score', 
-                    # Explicit colors: Green (0) -> Yellow (50) -> Red (100)
-                    color_continuous_scale=["#00ff00", "#ffff00", "#ff0000"], 
+                    color_continuous_scale=["#00ff00", "#ffff00", "#ff0000"], # Green -> Yellow -> Red
                     range_color=(0, 100),
                     mapbox_style="carto-positron", zoom=5.5,
                     center={"lat": merged.geometry.centroid.y.mean(), "lon": merged.geometry.centroid.x.mean()},
-                    hover_name='District', hover_data={'Risk Score': True, 'Rainfall (mm)': True}
+                    hover_name='District_Label', 
+                    hover_data={'Risk Score': True, 'Rainfall (mm)': True}
                 )
                 fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
                 
-                # KEY FIX: Force redraw when risk_type changes
-                st.plotly_chart(fig, use_container_width=True, key=f"map_{risk_type}")
+                # Force Redraw on Change
+                st.plotly_chart(fig, use_container_width=True, key=f"map_{risk_type}_{selected_state}")
+            else:
+                st.warning(f"Could not match state '{selected_state}' in shapefile.")
+        else:
+            st.info("Map data loading...")
 
     with col_details:
         st.subheader("🧐 Detailed Risk Diagnostics")
@@ -261,34 +277,32 @@ def main():
             if not row.empty:
                 r = row.iloc[0]
                 curr_score = r.get(risk_type, 0)
-                
-                # Fetch Raw Indicators
                 indicators = get_indicators(selected_dist_map, indicators_df)
                 
-                # 1. Score Card
+                # Score Card
                 st.metric(label=f"Total {clean_risk_name}", value=f"{curr_score:.1f}%", 
                           delta="Critical" if curr_score > 80 else "Normal", delta_color="inverse")
                 st.markdown("---")
                 
-                # 2. Enhanced Narrative
+                # Narrative
                 st.markdown("### 📝 Impact Analysis")
                 narratives = generate_enhanced_narrative(r, curr_score, indicators)
                 for n in narratives:
                     st.markdown(n, unsafe_allow_html=True)
                 
-                # 3. Data Table (If indicators exist)
+                # Raw Data
                 if indicators is not None:
                     st.markdown("#### 📊 District Profile (Original Data)")
                     i_col1, i_col2 = st.columns(2)
                     with i_col1:
-                        st.caption("Households in Kuccha Houses")
+                        st.caption("Kuccha Houses")
                         st.write(f"**{indicators.get('Kuccha_House_Pct', 0):.1f}%**")
-                        st.caption("Workforce in Agriculture")
+                        st.caption("Farming Workforce")
                         st.write(f"**{indicators.get('Agri_Workers_Pct', 0):.1f}%**")
                     with i_col2:
                         st.caption("Mobile Coverage")
                         st.write(f"**{indicators.get('Mobile_Coverage_Pct', 0):.1f}%**")
-                        st.caption("Irrigation Coverage")
+                        st.caption("Irrigation")
                         st.write(f"**{indicators.get('Irrigation_Coverage_Pct', 0):.1f}%**")
 
     # --- TRENDS ---
