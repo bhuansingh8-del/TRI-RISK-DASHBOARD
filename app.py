@@ -149,7 +149,7 @@ def main():
     with col_logo:
         # REPLACE 'tri_logo.png' WITH YOUR ACTUAL FILENAME
         if os.path.exists("TRI-logo.png"):
-            st.image("TRI-logo.png", width=100)
+            st.image("TRI-logo.png", width=200)
         else:
             # Fallback emoji if logo is missing
             st.markdown("# 🛡️")
@@ -366,4 +366,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
