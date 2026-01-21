@@ -138,15 +138,33 @@ def load_shapefile():
     return None
 
 # ================= MAIN APP =================
+# ... (keep all imports and helper functions the same) ...
+
+# ================= MAIN APP =================
 def main():
-    st.title("🛡️ TRI Climate Risk Decision Support System")
-    st.markdown("### Integrated Hazard, Vulnerability & Coping Capacity Assessment")
+    # --- 1. HEADER WITH LOGO ---
+    # Create two columns: small one for logo, big one for title
+    col_logo, col_title = st.columns([1, 5])
+    
+    with col_logo:
+        # REPLACE 'tri_logo.png' WITH YOUR ACTUAL FILENAME
+        if os.path.exists("TRI-logo.png"):
+            st.image("TRI-logo.png", width=100)
+        else:
+            # Fallback emoji if logo is missing
+            st.markdown("# 🛡️")
+
+    with col_title:
+        st.title("TRI Climate Risk Decision Support System")
+        st.markdown("### Integrated Hazard, Vulnerability & Coping Capacity Assessment")
+    
     st.divider()
 
     # --- SESSION STATE ---
     if 'selected_district_click' not in st.session_state:
         st.session_state.selected_district_click = None
 
+    # ... (Rest of the main function remains exactly the same as before) ...
     # --- LOAD DATA ---
     data_map = load_data()
     indicators_df = load_indicators()
@@ -348,3 +366,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
