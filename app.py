@@ -17,9 +17,6 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8f9fa; }
     div[data-testid="stMetricValue"] { font-size: 24px; color: #333; }
-    .risk-critical { color: #d9534f; font-weight: bold; }
-    .risk-high { color: #f0ad4e; font-weight: bold; }
-    .risk-safe { color: #5cb85c; font-weight: bold; }
     .explanation-box { background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #007bff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
@@ -53,12 +50,12 @@ def generate_enhanced_narrative(row, score, indicators):
     rain_val = row.get('Precipitation', 0)
     heat_val = row.get('Wet_Bulb', 0)
     
-    if rain_val > 100:
+    if rain_val > 64.5:
         narrative.append(f"""
         <div class='explanation-box' style='border-left-color: #dc3545;'>
             <strong>🔥 Severe Hazard (Trigger):</strong><br>
-            Extreme rainfall of <b>{rain_val:.1f} mm</b> has been detected this week. 
-            This is significantly above the flooding threshold (64.5mm), creating an immediate physical threat.
+            Heavy rainfall of <b>{rain_val:.1f} mm</b> has been detected this week. 
+            This is above the heavy rain threshold, creating an immediate flood threat.
         </div>
         """)
     elif heat_val > 30:
@@ -66,7 +63,7 @@ def generate_enhanced_narrative(row, score, indicators):
         <div class='explanation-box' style='border-left-color: #fd7e14;'>
             <strong>🔥 Severe Hazard (Trigger):</strong><br>
             Dangerous Heat Stress conditions detected (Wet Bulb: <b>{heat_val:.1f}°C</b>). 
-            At this level, the human body struggles to cool down via sweating, posing a risk of heatstroke.
+            At this level, the human body struggles to cool down via sweating.
         </div>
         """)
     elif score < 30:
@@ -78,7 +75,6 @@ def generate_enhanced_narrative(row, score, indicators):
         """)
 
     # --- 2. VULNERABILITY ANALYSIS (The "Why it hurts") ---
-    # We use the 'indicators' data to explain WHY the score is high
     if indicators is not None and score > 40:
         kuccha = indicators.get('Kuccha_House_Pct', 0)
         farmers = indicators.get('Agri_Workers_Pct', 0)
@@ -140,7 +136,6 @@ def load_data():
 
 @st.cache_data
 def load_indicators():
-    """Loads the Raw Vulnerability Data for the Deep Dive"""
     if os.path.exists("District_Indicators.xlsx"):
         return pd.read_excel("District_Indicators.xlsx")
     return None
@@ -151,6 +146,7 @@ def load_shapefile():
     if shp_files:
         try:
             gdf = gpd.read_file(shp_files[0])
+            # Handle CRS (Projection) issues automatically
             if gdf.crs is None:
                 gdf.set_crs(epsg=4326, inplace=True)
             elif gdf.crs != "EPSG:4326":
@@ -194,6 +190,7 @@ def main():
     
     st.sidebar.info(f"📅 **Selected:** {selected_date.strftime('%d %b %Y')}\n\n📊 **Week:** {target_week}")
 
+    # Risk Type Selector (Matches Excel Column Names)
     risk_type = st.sidebar.radio(
         "Visualize Risk:", 
         ["Extreme_Rain_Prob_%", "Heat_Prob_%"],
@@ -220,7 +217,7 @@ def main():
     col_map, col_details = st.columns([1.8, 1.2])
     
     with col_map:
-        st.subheader(f"🗺️ State Risk Map")
+        st.subheader(f"🗺️ State Risk Map: {clean_risk_name}")
         gdf = load_shapefile()
         if gdf is not None and not risk_df.empty:
             map_states = gdf['STATE'].unique()
@@ -229,22 +226,29 @@ def main():
             if match:
                 state_gdf = gdf[gdf['STATE'].str.upper() == match[0]].copy()
                 state_gdf['DIST_CLEAN'] = state_gdf['District'].str.upper().str.strip()
+                
                 merged = state_gdf.merge(risk_df, left_on='DIST_CLEAN', right_on='District', how='left')
                 merged['Risk Score'] = merged['Risk Score'].fillna(0)
                 
-                # Column Rename Fix
+                # Column Rename Fix (Handles District_x vs District)
                 if 'District_x' in merged.columns: merged = merged.rename(columns={'District_x': 'District'})
                 elif 'DIST_CLEAN' in merged.columns: merged['District'] = merged['DIST_CLEAN']
                 
+                # Plot Map (FIXED COLORS & KEY)
                 fig = px.choropleth_mapbox(
                     merged, geojson=merged.geometry, locations=merged.index,
-                    color='Risk Score', color_continuous_scale="RdYlGn_r", range_color=(0, 100),
+                    color='Risk Score', 
+                    # Explicit colors: Green (0) -> Yellow (50) -> Red (100)
+                    color_continuous_scale=["#00ff00", "#ffff00", "#ff0000"], 
+                    range_color=(0, 100),
                     mapbox_style="carto-positron", zoom=5.5,
                     center={"lat": merged.geometry.centroid.y.mean(), "lon": merged.geometry.centroid.x.mean()},
                     hover_name='District', hover_data={'Risk Score': True, 'Rainfall (mm)': True}
                 )
                 fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
-                st.plotly_chart(fig, use_container_width=True)
+                
+                # KEY FIX: Force redraw when risk_type changes
+                st.plotly_chart(fig, use_container_width=True, key=f"map_{risk_type}")
 
     with col_details:
         st.subheader("🧐 Detailed Risk Diagnostics")
@@ -258,13 +262,12 @@ def main():
                 r = row.iloc[0]
                 curr_score = r.get(risk_type, 0)
                 
-                # Fetch Raw Indicators (The Secret Sauce)
+                # Fetch Raw Indicators
                 indicators = get_indicators(selected_dist_map, indicators_df)
                 
                 # 1. Score Card
                 st.metric(label=f"Total {clean_risk_name}", value=f"{curr_score:.1f}%", 
                           delta="Critical" if curr_score > 80 else "Normal", delta_color="inverse")
-                
                 st.markdown("---")
                 
                 # 2. Enhanced Narrative
@@ -279,14 +282,14 @@ def main():
                     i_col1, i_col2 = st.columns(2)
                     with i_col1:
                         st.caption("Households in Kuccha Houses")
-                        st.write(f"**{indicators.get('Kuccha_House_Pct', 'N/A')}%**")
+                        st.write(f"**{indicators.get('Kuccha_House_Pct', 0):.1f}%**")
                         st.caption("Workforce in Agriculture")
-                        st.write(f"**{indicators.get('Agri_Workers_Pct', 'N/A')}%**")
+                        st.write(f"**{indicators.get('Agri_Workers_Pct', 0):.1f}%**")
                     with i_col2:
                         st.caption("Mobile Coverage")
-                        st.write(f"**{indicators.get('Mobile_Coverage_Pct', 'N/A')}%**")
+                        st.write(f"**{indicators.get('Mobile_Coverage_Pct', 0):.1f}%**")
                         st.caption("Irrigation Coverage")
-                        st.write(f"**{indicators.get('Irrigation_Coverage_Pct', 'N/A')}%**")
+                        st.write(f"**{indicators.get('Irrigation_Coverage_Pct', 0):.1f}%**")
 
     # --- TRENDS ---
     st.markdown("---")
