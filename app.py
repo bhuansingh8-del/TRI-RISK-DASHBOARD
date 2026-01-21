@@ -270,18 +270,7 @@ def main():
                 # 6. FIX NULL HOVER LABELS
                 merged['Display_Label'] = merged['Excel_District'].fillna(merged['CLEAN_MAP_NAME'])
                 merged['Risk Score'] = merged['Risk Score'].fillna(0)
-                
-                # --- 🕵️ DETECTIVE MODE ---
-                unmatched_map = merged[merged['Risk Score'] == 0]['CLEAN_MAP_NAME'].unique()
-                unmatched_excel = risk_df[risk_df['MERGE_KEY'].isna()]['CLEAN_EXCEL_NAME'].unique()
-                
-                if len(unmatched_map) > 0 or len(unmatched_excel) > 0:
-                    with st.expander(f"🕵️ Name Detective (Found {len(unmatched_map)} unmatched map districts)"):
-                        st.caption("These districts on the map have no data. Check 'UNIVERSAL_FIXES' in code.")
-                        col1, col2 = st.columns(2)
-                        with col1: st.write("**Unmatched on Map:**", sorted(unmatched_map))
-                        with col2: st.write("**Unused Excel Data:**", sorted(unmatched_excel))
-
+              
                 # --- PLOT MAP ---
                 fig = px.choropleth_mapbox(
                     merged, geojson=merged.geometry, locations=merged.index,
@@ -366,5 +355,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
