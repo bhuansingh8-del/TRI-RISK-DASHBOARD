@@ -23,7 +23,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= HELPER FUNCTIONS (UNCHANGED) =================
+# ================= HELPER FUNCTIONS =================
 def clean_label(text):
     return text.replace("_", " ").replace("Pct", "%").replace("Prob", "Risk").title()
 
@@ -79,31 +79,38 @@ def generate_enhanced_narrative(row, score, indicators):
             
     return narrative
 
-# ================= NEW HELPERS (FOR JHARKHAND ONLY) =================
+# ================= NEW HELPERS (FIXED FOR YOUR DATA) =================
 @st.cache_data
 def load_jharkhand_village_map():
-    # Looks for the ZIP file map
-    map_path = "data/jharkhand_villages_optimized.zip"
-    if os.path.exists(map_path):
-        try:
-            gdf = gpd.read_file(map_path)
-            if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
-            return gdf
-        except: return None
+    # Try the optimized name first (since that's what you have), then the standard one
+    paths_to_try = [
+        "data/jharkhand_villages_optimized.zip",
+        "data/jharkhand_villages.zip"
+    ]
+    
+    for map_path in paths_to_try:
+        if os.path.exists(map_path):
+            try:
+                gdf = gpd.read_file(map_path)
+                if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
+                return gdf
+            except: continue
+            
     return None
 
 @st.cache_data
 def load_jharkhand_amenities_csv():
-    # Looks for the CSV file you uploaded
     csv_path = "data/Final_Dashboard_Data.csv"
     if os.path.exists(csv_path):
         try:
             df = pd.read_csv(csv_path)
+            # Ensure names are string for matching
+            df['Village_Name'] = df['Village_Name'].astype(str).str.strip()
             return df
         except: return pd.DataFrame()
     return pd.DataFrame()
 
-# ================= DATA LOADING (UNCHANGED) =================
+# ================= DATA LOADING =================
 @st.cache_data
 def load_data():
     files = glob.glob("*_DETAILED_PREDICTIONS_FINAL.xlsx")
@@ -208,6 +215,7 @@ def main():
                         break
 
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf[dist_col].apply(smart_fix_name)
+                # ... (Keeping standard Universal Fixes same as before) ...
                 UNIVERSAL_FIXES = {
                     "KHERI": "LAKHIMPUR KHERI", "LAKHIMPUR": "LAKHIMPUR KHERI",
                     "BHADOHI": "SANT RAVIDAS NAGAR", "SANT RAVIDAS NAGAR": "BHADOHI",
@@ -291,38 +299,36 @@ def main():
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
                 # ========================================================
-                # 🛡️ HYBRID LOGIC: JHARKHAND VS OTHERS 🛡️
+                # 🛡️ JHARKHAND FIX: Use lowercase 'district' & 'village'
                 # ========================================================
                 
                 if selected_state == "Jharkhand":
-                    # --- JHARKHAND: SHOW MAP AND USE CSV DATA ---
                     st.markdown("---")
                     st.markdown("### 🏘️ Village Amenities Drill-Down")
                     
                     with st.spinner(f"Loading Village Data for {selected_dist_map}..."):
                         villages_gdf = load_jharkhand_village_map()
-                        amenities_df = load_jharkhand_amenities_csv() # Using your uploaded CSV
+                        amenities_df = load_jharkhand_amenities_csv()
                         
                         if villages_gdf is not None:
-                            # Filter Village Map for this district
-                            possible_dist_cols = ['District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1']
+                            # 1. UPDATED COLUMN LIST (Includes 'district')
+                            possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1', 'NAME_1']
                             v_dist_col = next((c for c in possible_dist_cols if c in villages_gdf.columns), None)
                             
                             if v_dist_col:
-                                v_districts = villages_gdf[v_dist_col].unique()
-                                v_match = difflib.get_close_matches(selected_dist_map, v_districts, n=1, cutoff=0.6)
+                                # Fuzzy match (e.g. 'Ranchi' vs 'Ranchi District')
+                                v_districts = villages_gdf[v_dist_col].dropna().astype(str).unique()
+                                v_match = difflib.get_close_matches(selected_dist_map, v_districts, n=1, cutoff=0.5)
                                 
                                 if v_match:
                                     local_villages = villages_gdf[villages_gdf[v_dist_col] == v_match[0]]
                                     
-                                    # Create Folium Map
                                     centroid = local_villages.geometry.centroid
                                     m = folium.Map(location=[centroid.y.mean(), centroid.x.mean()], zoom_start=10)
                                     
-                                    # Identify Village Name Column
-                                    v_name_col = next((c for c in ['Name', 'NAME', 'vilname', 'Village'] if c in local_villages.columns), local_villages.columns[0])
+                                    # 2. UPDATED VILLAGE COLUMN (Includes 'village')
+                                    v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname'] if c in local_villages.columns), local_villages.columns[0])
 
-                                    # Draw Villages
                                     folium.GeoJson(
                                         local_villages,
                                         name="Villages",
@@ -331,40 +337,36 @@ def main():
                                         highlight_function=lambda x: {'weight': 3, 'color': 'red'}
                                     ).add_to(m)
                                     
-                                    # Handle Clicks
                                     map_out = st_folium(m, height=400, width=500)
                                     
                                     if map_out['last_active_drawing']:
                                         props = map_out['last_active_drawing']['properties']
                                         if props and v_name_col in props:
-                                            clicked_v = props[v_name_col]
+                                            clicked_v = str(props[v_name_col])
                                             st.info(f"📍 **{clicked_v}**")
                                             
-                                            # --- FASTER LOOKUP FROM CSV ---
-                                            # We check if this village exists in your amenities CSV
+                                            # CSV LOOKUP (Case Insensitive)
                                             if not amenities_df.empty and 'Village_Name' in amenities_df.columns:
-                                                amenity_row = amenities_df[amenities_df['Village_Name'] == clicked_v]
+                                                amenity_row = amenities_df[amenities_df['Village_Name'].str.lower() == clicked_v.lower()]
                                                 
                                                 if not amenity_row.empty:
                                                     h_count = amenity_row.iloc[0]['Hospital_Count']
                                                     p_count = amenity_row.iloc[0]['Pond_Count']
                                                     
                                                     c1, c2 = st.columns(2)
-                                                    c1.metric("🏥 Hospitals", h_count)
-                                                    c2.metric("💧 Ponds", p_count)
+                                                    c1.metric("🏥 Hospitals", int(h_count))
+                                                    c2.metric("💧 Ponds", int(p_count))
                                                 else:
                                                     st.caption("No specific amenity data for this village.")
-                                            else:
-                                                st.caption("Amenities database not loaded.")
                                     else:
                                         st.caption("👈 Click a village on the map above to see Ponds & Hospitals.")
                                 else:
                                     st.warning(f"District map data not found for {selected_dist_map}")
                         else:
-                            st.error("Jharkhand Village Map (zip) not found in data/ folder.")
+                            st.error("Jharkhand Map (zip) not found in data/ folder.")
 
                 else:
-                    # --- OTHERS (AGRA, ETC): SHOW STANDARD INDICATORS (UNCHANGED) ---
+                    # --- OTHERS (AGRA, ETC) ---
                     if indicators is not None:
                         st.markdown("#### 📊 District Profile")
                         i_col1, i_col2 = st.columns(2)
@@ -379,7 +381,6 @@ def main():
                             st.caption("Irrigation")
                             st.write(f"**{indicators.get('Irrigation_Coverage_Pct', 0):.1f}%**")
 
-    # --- TRENDS ---
     st.markdown("---")
     st.subheader(f"📈 52-Week Risk Trend: {clean_label(selected_dist_map) if selected_dist_map else ''}")
     if selected_dist_map:
@@ -391,4 +392,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
