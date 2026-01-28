@@ -61,8 +61,6 @@ def generate_enhanced_narrative(row, score, indicators):
     elif score < 30:
         narrative.append(f"<div class='explanation-box' style='border-left-color: #28a745;'><strong>✅ Low Hazard:</strong><br>Normal conditions.</div>")
 
-    # Only show extra indicators if NOT in Jharkhand Mode (to save space)
-    # We check session state, or just let it render, it won't hurt.
     if indicators is not None and score > 40:
         kuccha = indicators.get('Kuccha_House_Pct', 0)
         farmers = indicators.get('Agri_Workers_Pct', 0)
@@ -84,7 +82,6 @@ def generate_enhanced_narrative(row, score, indicators):
 # ================= DATA LOADERS =================
 @st.cache_data
 def load_jharkhand_village_map():
-    # Try both potential filenames
     paths = ["data/jharkhand_villages_optimized.zip", "data/jharkhand_villages.zip"]
     for p in paths:
         if os.path.exists(p):
@@ -96,16 +93,42 @@ def load_jharkhand_village_map():
     return None
 
 @st.cache_data
-def load_jharkhand_amenities_csv():
-    csv_path = "data/Final_Dashboard_Data.csv"
-    if os.path.exists(csv_path):
+def load_district_resources(district_name):
+    # Load specific resource file for the selected district (Points/Polygons)
+    # This allows us to plot them on the map
+    clean_dist = str(district_name).strip().replace(" ", "_")
+    
+    # Try multiple naming patterns
+    patterns = [
+        f"raw_resources/{clean_dist}_resources.geojson",
+        f"raw_resources/{clean_dist}_District_resources.geojson",
+        f"raw_resources/{clean_dist}.geojson"
+    ]
+    
+    # Also look for any file that *contains* the district name
+    all_files = glob.glob("raw_resources/*.geojson")
+    
+    target_file = None
+    for p in patterns:
+        if os.path.exists(p):
+            target_file = p
+            break
+            
+    if not target_file:
+        # fuzzy search in folder
+        for f in all_files:
+            if clean_dist.lower() in f.lower():
+                target_file = f
+                break
+                
+    if target_file:
         try:
-            df = pd.read_csv(csv_path)
-            # Ensure names are string for matching
-            df['Village_Name'] = df['Village_Name'].astype(str).str.strip()
-            return df
-        except: return pd.DataFrame()
-    return pd.DataFrame()
+            gdf = gpd.read_file(target_file)
+            if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
+            return gdf
+        except: return gpd.GeoDataFrame()
+        
+    return gpd.GeoDataFrame()
 
 @st.cache_data
 def load_data():
@@ -164,7 +187,6 @@ def main():
     st.sidebar.header("📍 Location & Time")
     selected_state = st.sidebar.selectbox("Select State", list(data_map.keys()))
     
-    # DEBUG: Show what mode we are in
     if selected_state.strip().upper() == "JHARKHAND":
         st.sidebar.success("✅ Jharkhand Mode Active")
     else:
@@ -258,7 +280,6 @@ def main():
                 )
                 fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, clickmode='event+select')
                 
-                # Use width="stretch" to prevent Streamlit warnings
                 event = st.plotly_chart(fig, width=None, use_container_width=True, key=f"map_{risk_type}_{selected_state}", on_select="rerun")
                 
                 if event and "selection" in event and event["selection"]["points"]:
@@ -301,32 +322,25 @@ def main():
                 narratives = generate_enhanced_narrative(r, curr_score, indicators)
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
-                # ========================================================
-                # 🛡️ FIXED CONDITION: IGNORE CASE (Jharkhand == JHARKHAND)
-                # ========================================================
-                
                 if selected_state.strip().upper() == "JHARKHAND":
                     st.markdown("---")
                     st.markdown("### 🏘️ Village Amenities Drill-Down")
                     
-                    with st.spinner(f"Loading Village Data for {selected_dist_map}..."):
+                    with st.spinner(f"Loading Village Data & Resources for {selected_dist_map}..."):
                         villages_gdf = load_jharkhand_village_map()
-                        amenities_df = load_jharkhand_amenities_csv()
+                        
+                        # LOAD THE ACTUAL RESOURCES (GeoJSON)
+                        district_resources = load_district_resources(selected_dist_map)
                         
                         if villages_gdf is not None:
-                            # 1. ROBUST COLUMN FINDER
                             possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1']
                             v_dist_col = next((c for c in possible_dist_cols if c in villages_gdf.columns), None)
                             
                             if v_dist_col:
-                                # 2. SUPER SEARCH (Lowercase matching)
                                 villages_gdf['match_col'] = villages_gdf[v_dist_col].astype(str).str.lower().str.strip()
                                 target_dist = str(selected_dist_map).lower().strip()
-                                
-                                # Filter
                                 local_villages = villages_gdf[villages_gdf['match_col'] == target_dist]
                                 
-                                # Fuzzy fallback
                                 if local_villages.empty:
                                     unique_dists = villages_gdf['match_col'].unique()
                                     v_match = difflib.get_close_matches(target_dist, unique_dists, n=1, cutoff=0.5)
@@ -339,6 +353,7 @@ def main():
                                     
                                     v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname'] if c in local_villages.columns), local_villages.columns[0])
 
+                                    # 1. VILLAGE LAYER
                                     folium.GeoJson(
                                         local_villages,
                                         name="Villages",
@@ -346,30 +361,77 @@ def main():
                                         tooltip=folium.GeoJsonTooltip(fields=[v_name_col], aliases=["Village:"]),
                                         highlight_function=lambda x: {'weight': 3, 'color': 'red'}
                                     ).add_to(m)
-                                    
+
+                                    # 2. ADD RESOURCES TO MAP (If available)
+                                    if not district_resources.empty:
+                                        # Filter by type for colors
+                                        hospitals = district_resources[district_resources['amenity'].isin(['hospital', 'clinic', 'doctors'])]
+                                        schools = district_resources[district_resources['amenity'].isin(['school', 'kindergarten', 'college'])]
+                                        water = district_resources[district_resources['water'].notnull()]
+
+                                        # Add Blue Dots (Water)
+                                        for _, row in water.iterrows():
+                                            if row.geometry.geom_type == 'Point':
+                                                folium.CircleMarker(
+                                                    location=[row.geometry.y, row.geometry.x], radius=3, color='blue', fill=True, tooltip="Water"
+                                                ).add_to(m)
+                                        
+                                        # Add Red Dots (Hospitals)
+                                        for _, row in hospitals.iterrows():
+                                            if row.geometry.geom_type == 'Point':
+                                                folium.CircleMarker(
+                                                    location=[row.geometry.y, row.geometry.x], radius=5, color='red', fill=True, tooltip=row.get('name', 'Hospital')
+                                                ).add_to(m)
+
+                                        # Add Green Dots (Schools)
+                                        for _, row in schools.iterrows():
+                                            if row.geometry.geom_type == 'Point':
+                                                folium.CircleMarker(
+                                                    location=[row.geometry.y, row.geometry.x], radius=3, color='green', fill=True, tooltip=row.get('name', 'School')
+                                                ).add_to(m)
+
                                     map_out = st_folium(m, height=400, width=500)
                                     
+                                    # 3. INTERACTION: SHOW DETAILS BELOW MAP
                                     if map_out['last_active_drawing']:
                                         props = map_out['last_active_drawing']['properties']
                                         if props and v_name_col in props:
                                             clicked_v = str(props[v_name_col])
-                                            st.info(f"📍 **{clicked_v}**")
+                                            st.info(f"📍 **Selected Village: {clicked_v}**")
                                             
-                                            # CSV LOOKUP
-                                            if not amenities_df.empty and 'Village_Name' in amenities_df.columns:
-                                                amenity_row = amenities_df[amenities_df['Village_Name'].str.lower() == clicked_v.lower()]
-                                                
-                                                if not amenity_row.empty:
-                                                    h_count = amenity_row.iloc[0]['Hospital_Count']
-                                                    p_count = amenity_row.iloc[0]['Pond_Count']
+                                            # Find amenities inside this village geometry
+                                            clicked_geom = local_villages[local_villages[v_name_col].astype(str) == clicked_v]
+                                            
+                                            if not clicked_geom.empty and not district_resources.empty:
+                                                # Spatial Clip (Find what is inside)
+                                                try:
+                                                    amenities_inside = gpd.clip(district_resources, clicked_geom)
                                                     
-                                                    c1, c2 = st.columns(2)
-                                                    c1.metric("🏥 Hospitals", int(h_count))
-                                                    c2.metric("💧 Ponds", int(p_count))
-                                                else:
-                                                    st.caption("No specific amenity data for this village.")
+                                                    if not amenities_inside.empty:
+                                                        # Clean up table for display
+                                                        display_cols = ['name', 'amenity', 'water']
+                                                        present_cols = [c for c in display_cols if c in amenities_inside.columns]
+                                                        
+                                                        st.write(" **Amenities Found:**")
+                                                        st.dataframe(amenities_inside[present_cols].fillna("Unspecified").reset_index(drop=True), use_container_width=True)
+                                                        
+                                                        # Summary Metrics
+                                                        h_count = len(amenities_inside[amenities_inside['amenity'].isin(['hospital', 'clinic'])])
+                                                        s_count = len(amenities_inside[amenities_inside['amenity'].isin(['school', 'college'])])
+                                                        w_count = len(amenities_inside[amenities_inside['water'].notnull()])
+                                                        
+                                                        c1, c2, c3 = st.columns(3)
+                                                        c1.metric("🏥 Health", h_count)
+                                                        c2.metric("🏫 Education", s_count)
+                                                        c3.metric("💧 Water", w_count)
+                                                    else:
+                                                        st.warning("No amenities found inside this village boundary.")
+                                                except Exception as e:
+                                                    st.error(f"Error calculating amenities: {e}")
+                                            else:
+                                                st.caption("No resource data loaded for this area.")
                                     else:
-                                        st.caption("👈 Click a village on the map above to see Ponds & Hospitals.")
+                                        st.caption("👈 Click a village polygon to list its specific contents below.")
                                 else:
                                     st.warning(f"District '{selected_dist_map}' found in Excel but NOT in Map.")
                             else:
@@ -378,7 +440,6 @@ def main():
                             st.error("Jharkhand Map (zip) not found in data/ folder.")
 
                 else:
-                    # --- OTHERS (AGRA, ETC) ---
                     if indicators is not None:
                         st.markdown("#### 📊 District Profile")
                         i_col1, i_col2 = st.columns(2)
