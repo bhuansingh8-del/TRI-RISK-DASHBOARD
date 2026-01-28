@@ -1,5 +1,6 @@
 streamlit
-pandas
 geopandas
-plotly
-openpyxl
+pandas
+folium
+streamlit-folium
+shapely
