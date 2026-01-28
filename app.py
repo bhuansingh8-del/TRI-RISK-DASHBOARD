@@ -79,23 +79,18 @@ def generate_enhanced_narrative(row, score, indicators):
             
     return narrative
 
-# ================= NEW HELPERS (FIXED FOR YOUR DATA) =================
+# ================= NEW HELPERS =================
 @st.cache_data
 def load_jharkhand_village_map():
-    # Try the optimized name first (since that's what you have), then the standard one
-    paths_to_try = [
-        "data/jharkhand_villages_optimized.zip",
-        "data/jharkhand_villages.zip"
-    ]
-    
-    for map_path in paths_to_try:
-        if os.path.exists(map_path):
+    # Try both potential filenames
+    paths = ["data/jharkhand_villages_optimized.zip", "data/jharkhand_villages.zip"]
+    for p in paths:
+        if os.path.exists(p):
             try:
-                gdf = gpd.read_file(map_path)
+                gdf = gpd.read_file(p)
                 if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
                 return gdf
             except: continue
-            
     return None
 
 @st.cache_data
@@ -215,7 +210,6 @@ def main():
                         break
 
                 state_gdf['CLEAN_MAP_NAME'] = state_gdf[dist_col].apply(smart_fix_name)
-                # ... (Keeping standard Universal Fixes same as before) ...
                 UNIVERSAL_FIXES = {
                     "KHERI": "LAKHIMPUR KHERI", "LAKHIMPUR": "LAKHIMPUR KHERI",
                     "BHADOHI": "SANT RAVIDAS NAGAR", "SANT RAVIDAS NAGAR": "BHADOHI",
@@ -256,7 +250,8 @@ def main():
                 )
                 fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, clickmode='event+select')
                 
-                event = st.plotly_chart(fig, use_container_width=True, key=f"map_{risk_type}_{selected_state}", on_select="rerun")
+                # FIX 1: Use width="stretch" to stop warnings
+                event = st.plotly_chart(fig, width="stretch", key=f"map_{risk_type}_{selected_state}", on_select="rerun")
                 
                 if event and "selection" in event and event["selection"]["points"]:
                     point_index = event["selection"]["points"][0]["point_index"]
@@ -299,7 +294,7 @@ def main():
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
                 # ========================================================
-                # 🛡️ JHARKHAND FIX: Use lowercase 'district' & 'village'
+                # 🛡️ JHARKHAND FIX: LOWERCASE MATCHING + DEBUG
                 # ========================================================
                 
                 if selected_state == "Jharkhand":
@@ -311,22 +306,31 @@ def main():
                         amenities_df = load_jharkhand_amenities_csv()
                         
                         if villages_gdf is not None:
-                            # 1. UPDATED COLUMN LIST (Includes 'district')
-                            possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1', 'NAME_1']
+                            # 1. ROBUST COLUMN FINDER
+                            # We include lowercase 'district' and uppercase 'District'
+                            possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1']
                             v_dist_col = next((c for c in possible_dist_cols if c in villages_gdf.columns), None)
                             
                             if v_dist_col:
-                                # Fuzzy match (e.g. 'Ranchi' vs 'Ranchi District')
-                                v_districts = villages_gdf[v_dist_col].dropna().astype(str).unique()
-                                v_match = difflib.get_close_matches(selected_dist_map, v_districts, n=1, cutoff=0.5)
+                                # 2. SUPER SEARCH (Lowercase everything for matching)
+                                # Convert map column to string and lowercase
+                                villages_gdf['match_col'] = villages_gdf[v_dist_col].astype(str).str.lower().str.strip()
+                                target_dist = str(selected_dist_map).lower().strip()
                                 
-                                if v_match:
-                                    local_villages = villages_gdf[villages_gdf[v_dist_col] == v_match[0]]
-                                    
+                                # Exact match attempt
+                                local_villages = villages_gdf[villages_gdf['match_col'] == target_dist]
+                                
+                                # If no exact match, try fuzzy matching
+                                if local_villages.empty:
+                                    unique_dists = villages_gdf['match_col'].unique()
+                                    v_match = difflib.get_close_matches(target_dist, unique_dists, n=1, cutoff=0.5)
+                                    if v_match:
+                                        local_villages = villages_gdf[villages_gdf['match_col'] == v_match[0]]
+                                
+                                if not local_villages.empty:
                                     centroid = local_villages.geometry.centroid
                                     m = folium.Map(location=[centroid.y.mean(), centroid.x.mean()], zoom_start=10)
                                     
-                                    # 2. UPDATED VILLAGE COLUMN (Includes 'village')
                                     v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname'] if c in local_villages.columns), local_villages.columns[0])
 
                                     folium.GeoJson(
@@ -345,7 +349,6 @@ def main():
                                             clicked_v = str(props[v_name_col])
                                             st.info(f"📍 **{clicked_v}**")
                                             
-                                            # CSV LOOKUP (Case Insensitive)
                                             if not amenities_df.empty and 'Village_Name' in amenities_df.columns:
                                                 amenity_row = amenities_df[amenities_df['Village_Name'].str.lower() == clicked_v.lower()]
                                                 
@@ -361,7 +364,10 @@ def main():
                                     else:
                                         st.caption("👈 Click a village on the map above to see Ponds & Hospitals.")
                                 else:
-                                    st.warning(f"District map data not found for {selected_dist_map}")
+                                    st.warning(f"District '{selected_dist_map}' found in Excel but NOT in Village Map.")
+                                    st.write(f"Map Districts (Sample): {villages_gdf[v_dist_col].unique()[:5]}")
+                            else:
+                                st.error("Map file loaded, but 'District' column missing.")
                         else:
                             st.error("Jharkhand Map (zip) not found in data/ folder.")
 
@@ -388,7 +394,8 @@ def main():
         fig_line = px.line(trend_df, x='Week', y=risk_type, markers=True, title=f"Annual Risk Profile: {selected_dist_map}")
         fig_line.add_hline(y=60, line_dash="dot", annotation_text="High Risk")
         fig_line.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Critical")
-        st.plotly_chart(fig_line, use_container_width=True)
+        # FIX 2: Use width="stretch" here too
+        st.plotly_chart(fig_line, width="stretch")
 
 if __name__ == "__main__":
     main()
