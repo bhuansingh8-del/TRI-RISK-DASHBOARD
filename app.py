@@ -61,6 +61,8 @@ def generate_enhanced_narrative(row, score, indicators):
     elif score < 30:
         narrative.append(f"<div class='explanation-box' style='border-left-color: #28a745;'><strong>✅ Low Hazard:</strong><br>Normal conditions.</div>")
 
+    # Only show extra indicators if NOT in Jharkhand Mode (to save space)
+    # We check session state, or just let it render, it won't hurt.
     if indicators is not None and score > 40:
         kuccha = indicators.get('Kuccha_House_Pct', 0)
         farmers = indicators.get('Agri_Workers_Pct', 0)
@@ -79,7 +81,7 @@ def generate_enhanced_narrative(row, score, indicators):
             
     return narrative
 
-# ================= NEW HELPERS =================
+# ================= DATA LOADERS =================
 @st.cache_data
 def load_jharkhand_village_map():
     # Try both potential filenames
@@ -105,7 +107,6 @@ def load_jharkhand_amenities_csv():
         except: return pd.DataFrame()
     return pd.DataFrame()
 
-# ================= DATA LOADING =================
 @st.cache_data
 def load_data():
     files = glob.glob("*_DETAILED_PREDICTIONS_FINAL.xlsx")
@@ -162,6 +163,13 @@ def main():
     # --- SIDEBAR ---
     st.sidebar.header("📍 Location & Time")
     selected_state = st.sidebar.selectbox("Select State", list(data_map.keys()))
+    
+    # DEBUG: Show what mode we are in
+    if selected_state.strip().upper() == "JHARKHAND":
+        st.sidebar.success("✅ Jharkhand Mode Active")
+    else:
+        st.sidebar.info("ℹ️ Standard Mode Active")
+
     state_data = data_map[selected_state]
     district_list = list(state_data.keys()) 
 
@@ -250,8 +258,8 @@ def main():
                 )
                 fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, clickmode='event+select')
                 
-                # FIX 1: Use width="stretch" to stop warnings
-                event = st.plotly_chart(fig, width="stretch", key=f"map_{risk_type}_{selected_state}", on_select="rerun")
+                # Use width="stretch" to prevent Streamlit warnings
+                event = st.plotly_chart(fig, width=None, use_container_width=True, key=f"map_{risk_type}_{selected_state}", on_select="rerun")
                 
                 if event and "selection" in event and event["selection"]["points"]:
                     point_index = event["selection"]["points"][0]["point_index"]
@@ -294,10 +302,10 @@ def main():
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
                 # ========================================================
-                # 🛡️ JHARKHAND FIX: LOWERCASE MATCHING + DEBUG
+                # 🛡️ FIXED CONDITION: IGNORE CASE (Jharkhand == JHARKHAND)
                 # ========================================================
                 
-                if selected_state == "Jharkhand":
+                if selected_state.strip().upper() == "JHARKHAND":
                     st.markdown("---")
                     st.markdown("### 🏘️ Village Amenities Drill-Down")
                     
@@ -307,20 +315,18 @@ def main():
                         
                         if villages_gdf is not None:
                             # 1. ROBUST COLUMN FINDER
-                            # We include lowercase 'district' and uppercase 'District'
                             possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1']
                             v_dist_col = next((c for c in possible_dist_cols if c in villages_gdf.columns), None)
                             
                             if v_dist_col:
-                                # 2. SUPER SEARCH (Lowercase everything for matching)
-                                # Convert map column to string and lowercase
+                                # 2. SUPER SEARCH (Lowercase matching)
                                 villages_gdf['match_col'] = villages_gdf[v_dist_col].astype(str).str.lower().str.strip()
                                 target_dist = str(selected_dist_map).lower().strip()
                                 
-                                # Exact match attempt
+                                # Filter
                                 local_villages = villages_gdf[villages_gdf['match_col'] == target_dist]
                                 
-                                # If no exact match, try fuzzy matching
+                                # Fuzzy fallback
                                 if local_villages.empty:
                                     unique_dists = villages_gdf['match_col'].unique()
                                     v_match = difflib.get_close_matches(target_dist, unique_dists, n=1, cutoff=0.5)
@@ -349,6 +355,7 @@ def main():
                                             clicked_v = str(props[v_name_col])
                                             st.info(f"📍 **{clicked_v}**")
                                             
+                                            # CSV LOOKUP
                                             if not amenities_df.empty and 'Village_Name' in amenities_df.columns:
                                                 amenity_row = amenities_df[amenities_df['Village_Name'].str.lower() == clicked_v.lower()]
                                                 
@@ -364,10 +371,9 @@ def main():
                                     else:
                                         st.caption("👈 Click a village on the map above to see Ponds & Hospitals.")
                                 else:
-                                    st.warning(f"District '{selected_dist_map}' found in Excel but NOT in Village Map.")
-                                    st.write(f"Map Districts (Sample): {villages_gdf[v_dist_col].unique()[:5]}")
+                                    st.warning(f"District '{selected_dist_map}' found in Excel but NOT in Map.")
                             else:
-                                st.error("Map file loaded, but 'District' column missing.")
+                                st.error("Map loaded but 'District' column is missing.")
                         else:
                             st.error("Jharkhand Map (zip) not found in data/ folder.")
 
@@ -394,8 +400,7 @@ def main():
         fig_line = px.line(trend_df, x='Week', y=risk_type, markers=True, title=f"Annual Risk Profile: {selected_dist_map}")
         fig_line.add_hline(y=60, line_dash="dot", annotation_text="High Risk")
         fig_line.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Critical")
-        # FIX 2: Use width="stretch" here too
-        st.plotly_chart(fig_line, width="stretch")
+        st.plotly_chart(fig_line, use_container_width=True)
 
 if __name__ == "__main__":
     main()
