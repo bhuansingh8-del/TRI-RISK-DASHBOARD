@@ -83,7 +83,7 @@ def generate_enhanced_narrative(row, score, indicators):
 @st.cache_data
 def load_jharkhand_village_map():
     # Looks for the ZIP file map
-    map_path = "data/jharkhand_villages.zip"
+    map_path = "data/jharkhand_villages_optimized.zip"
     if os.path.exists(map_path):
         try:
             gdf = gpd.read_file(map_path)
@@ -391,3 +391,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
