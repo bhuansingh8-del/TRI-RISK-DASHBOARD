@@ -7,6 +7,7 @@ import os
 import warnings
 import difflib
 import folium 
+from folium import JsCode # Added for speed optimization
 from streamlit_folium import st_folium
 from datetime import datetime, timedelta
 
@@ -94,8 +95,7 @@ def load_jharkhand_village_map():
 
 @st.cache_data
 def load_district_resources(district_name):
-    # Load specific resource file for the selected district (Points/Polygons)
-    # This allows us to plot them on the map
+    # Load specific resource file for the selected district
     clean_dist = str(district_name).strip().replace(" ", "_")
     
     # Try multiple naming patterns
@@ -104,8 +104,6 @@ def load_district_resources(district_name):
         f"raw_resources/{clean_dist}_District_resources.geojson",
         f"raw_resources/{clean_dist}.geojson"
     ]
-    
-    # Also look for any file that *contains* the district name
     all_files = glob.glob("raw_resources/*.geojson")
     
     target_file = None
@@ -115,7 +113,6 @@ def load_district_resources(district_name):
             break
             
     if not target_file:
-        # fuzzy search in folder
         for f in all_files:
             if clean_dist.lower() in f.lower():
                 target_file = f
@@ -328,8 +325,6 @@ def main():
                     
                     with st.spinner(f"Loading Village Data & Resources for {selected_dist_map}..."):
                         villages_gdf = load_jharkhand_village_map()
-                        
-                        # LOAD THE ACTUAL RESOURCES (GeoJSON)
                         district_resources = load_district_resources(selected_dist_map)
                         
                         if villages_gdf is not None:
@@ -362,72 +357,85 @@ def main():
                                         highlight_function=lambda x: {'weight': 3, 'color': 'red'}
                                     ).add_to(m)
 
-                                    # 2. ADD RESOURCES TO MAP (If available)
+                                    # 2. OPTIMIZED RESOURCE LAYERS (No Loops = FASTER)
                                     if not district_resources.empty:
-                                        # Filter by type for colors
                                         hospitals = district_resources[district_resources['amenity'].isin(['hospital', 'clinic', 'doctors'])]
                                         schools = district_resources[district_resources['amenity'].isin(['school', 'kindergarten', 'college'])]
                                         water = district_resources[district_resources['water'].notnull()]
 
-                                        # Add Blue Dots (Water)
-                                        for _, row in water.iterrows():
-                                            if row.geometry.geom_type == 'Point':
-                                                folium.CircleMarker(
-                                                    location=[row.geometry.y, row.geometry.x], radius=3, color='blue', fill=True, tooltip="Water"
-                                                ).add_to(m)
-                                        
-                                        # Add Red Dots (Hospitals)
-                                        for _, row in hospitals.iterrows():
-                                            if row.geometry.geom_type == 'Point':
-                                                folium.CircleMarker(
-                                                    location=[row.geometry.y, row.geometry.x], radius=5, color='red', fill=True, tooltip=row.get('name', 'Hospital')
-                                                ).add_to(m)
+                                        # FAST RENDER: WATER (Blue)
+                                        if not water.empty:
+                                            folium.GeoJson(
+                                                water,
+                                                name="Water Bodies",
+                                                marker=folium.CircleMarker(radius=3, color='blue', fill_color='blue', fill_opacity=0.7),
+                                                tooltip="Water"
+                                            ).add_to(m)
 
-                                        # Add Green Dots (Schools)
-                                        for _, row in schools.iterrows():
-                                            if row.geometry.geom_type == 'Point':
-                                                folium.CircleMarker(
-                                                    location=[row.geometry.y, row.geometry.x], radius=3, color='green', fill=True, tooltip=row.get('name', 'School')
-                                                ).add_to(m)
+                                        # FAST RENDER: HEALTH (Red)
+                                        if not hospitals.empty:
+                                            folium.GeoJson(
+                                                hospitals,
+                                                name="Health Facilities",
+                                                marker=folium.CircleMarker(radius=5, color='red', fill_color='red', fill_opacity=0.7),
+                                                tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['Hospital:'])
+                                            ).add_to(m)
+
+                                        # FAST RENDER: SCHOOLS (Green)
+                                        if not schools.empty:
+                                            folium.GeoJson(
+                                                schools,
+                                                name="Education",
+                                                marker=folium.CircleMarker(radius=3, color='green', fill_color='green', fill_opacity=0.7),
+                                                tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['School:'])
+                                            ).add_to(m)
 
                                     map_out = st_folium(m, height=400, width=500)
                                     
-                                    # 3. INTERACTION: SHOW DETAILS BELOW MAP
+                                    # 3. FAST DRILL-DOWN (using .within instead of clip)
                                     if map_out['last_active_drawing']:
                                         props = map_out['last_active_drawing']['properties']
                                         if props and v_name_col in props:
                                             clicked_v = str(props[v_name_col])
                                             st.info(f"📍 **Selected Village: {clicked_v}**")
                                             
-                                            # Find amenities inside this village geometry
                                             clicked_geom = local_villages[local_villages[v_name_col].astype(str) == clicked_v]
                                             
                                             if not clicked_geom.empty and not district_resources.empty:
-                                                # Spatial Clip (Find what is inside)
-                                                try:
-                                                    amenities_inside = gpd.clip(district_resources, clicked_geom)
+                                                # --- OPTIMIZATION START ---
+                                                # Convert CRS only if needed
+                                                if district_resources.crs != clicked_geom.crs:
+                                                    district_resources = district_resources.to_crs(clicked_geom.crs)
                                                     
-                                                    if not amenities_inside.empty:
-                                                        # Clean up table for display
-                                                        display_cols = ['name', 'amenity', 'water']
-                                                        present_cols = [c for c in display_cols if c in amenities_inside.columns]
-                                                        
-                                                        st.write(" **Amenities Found:**")
-                                                        st.dataframe(amenities_inside[present_cols].fillna("Unspecified").reset_index(drop=True), use_container_width=True)
-                                                        
-                                                        # Summary Metrics
-                                                        h_count = len(amenities_inside[amenities_inside['amenity'].isin(['hospital', 'clinic'])])
-                                                        s_count = len(amenities_inside[amenities_inside['amenity'].isin(['school', 'college'])])
-                                                        w_count = len(amenities_inside[amenities_inside['water'].notnull()])
-                                                        
-                                                        c1, c2, c3 = st.columns(3)
-                                                        c1.metric("🏥 Health", h_count)
-                                                        c2.metric("🏫 Education", s_count)
-                                                        c3.metric("💧 Water", w_count)
-                                                    else:
-                                                        st.warning("No amenities found inside this village boundary.")
-                                                except Exception as e:
-                                                    st.error(f"Error calculating amenities: {e}")
+                                                # Get polygon geometry
+                                                poly = clicked_geom.geometry.iloc[0]
+                                                
+                                                # 1. Filter by Bounding Box (Super fast pre-filter)
+                                                # Use spatial index to find candidate points
+                                                possible_matches_index = list(district_resources.sindex.intersection(poly.bounds))
+                                                possible_matches = district_resources.iloc[possible_matches_index]
+                                                
+                                                # 2. Precise Point-in-Polygon Check (Fast boolean check)
+                                                amenities_inside = possible_matches[possible_matches.geometry.within(poly)]
+                                                # --- OPTIMIZATION END ---
+                                                    
+                                                if not amenities_inside.empty:
+                                                    display_cols = ['name', 'amenity', 'water']
+                                                    present_cols = [c for c in display_cols if c in amenities_inside.columns]
+                                                    
+                                                    st.write(" **Amenities Found:**")
+                                                    st.dataframe(amenities_inside[present_cols].fillna("Unspecified").reset_index(drop=True), use_container_width=True)
+                                                    
+                                                    h_count = len(amenities_inside[amenities_inside['amenity'].isin(['hospital', 'clinic'])])
+                                                    s_count = len(amenities_inside[amenities_inside['amenity'].isin(['school', 'college'])])
+                                                    w_count = len(amenities_inside[amenities_inside['water'].notnull()])
+                                                    
+                                                    c1, c2, c3 = st.columns(3)
+                                                    c1.metric("🏥 Health", h_count)
+                                                    c2.metric("🏫 Education", s_count)
+                                                    c3.metric("💧 Water", w_count)
+                                                else:
+                                                    st.warning("No amenities found inside this village boundary.")
                                             else:
                                                 st.caption("No resource data loaded for this area.")
                                     else:
