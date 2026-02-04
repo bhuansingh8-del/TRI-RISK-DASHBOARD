@@ -7,7 +7,7 @@ import os
 import warnings
 import difflib
 import folium 
-from folium import JsCode # Added for speed optimization
+from folium import JsCode
 from streamlit_folium import st_folium
 from datetime import datetime, timedelta
 
@@ -80,29 +80,36 @@ def generate_enhanced_narrative(row, score, indicators):
             
     return narrative
 
-# ================= DATA LOADERS =================
+# ================= SMART DATA LOADERS (HANDLES BOTH STATES) =================
 @st.cache_data
-def load_jharkhand_village_map():
-    paths = ["data/jharkhand_villages_optimized.zip", "data/jharkhand_villages.zip"]
-    for p in paths:
-        if os.path.exists(p):
-            try:
-                gdf = gpd.read_file(p)
-                if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
-                return gdf
-            except: continue
+def load_village_map(state_name):
+    """Dynamically loads the correct village map based on the selected state"""
+    clean_state = str(state_name).strip().upper()
+    
+    if clean_state == "JHARKHAND":
+        filename = "jharkhand_villages_optimized.zip"
+    elif clean_state == "UTTAR PRADESH":
+        filename = "up_villages_optimized.zip"
+    else:
+        return None # No advanced mode for other states yet
+
+    path = f"data/{filename}"
+    if os.path.exists(path):
+        try:
+            gdf = gpd.read_file(path)
+            if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
+            return gdf
+        except: return None
     return None
 
 @st.cache_data
 def load_district_resources(district_name):
-    # Load specific resource file for the selected district
+    # Load specific resource file for the selected district from raw_resources/
     clean_dist = str(district_name).strip().replace(" ", "_")
-    
-    # Try multiple naming patterns
     patterns = [
         f"raw_resources/{clean_dist}_resources.geojson",
-        f"raw_resources/{clean_dist}_District_resources.geojson",
-        f"raw_resources/{clean_dist}.geojson"
+        f"raw_resources/{clean_dist}.geojson",
+        f"raw_resources/{clean_dist}_District_resources.geojson"
     ]
     all_files = glob.glob("raw_resources/*.geojson")
     
@@ -184,8 +191,11 @@ def main():
     st.sidebar.header("📍 Location & Time")
     selected_state = st.sidebar.selectbox("Select State", list(data_map.keys()))
     
-    if selected_state.strip().upper() == "JHARKHAND":
-        st.sidebar.success("✅ Jharkhand Mode Active")
+    # ADVANCED MODE CHECK
+    is_advanced_mode = selected_state.strip().upper() in ["JHARKHAND", "UTTAR PRADESH"]
+    
+    if is_advanced_mode:
+        st.sidebar.success(f"✅ {selected_state}: Advanced Mode Active")
     else:
         st.sidebar.info("ℹ️ Standard Mode Active")
 
@@ -319,16 +329,17 @@ def main():
                 narratives = generate_enhanced_narrative(r, curr_score, indicators)
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
-                if selected_state.strip().upper() == "JHARKHAND":
+                if is_advanced_mode:
                     st.markdown("---")
                     st.markdown("### 🏘️ Village Amenities Drill-Down")
                     
                     with st.spinner(f"Loading Village Data & Resources for {selected_dist_map}..."):
-                        villages_gdf = load_jharkhand_village_map()
+                        villages_gdf = load_village_map(selected_state)
                         district_resources = load_district_resources(selected_dist_map)
                         
                         if villages_gdf is not None:
-                            possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1']
+                            # 1. FIND DISTRICT COLUMN
+                            possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1', 'NAME_1', 'NAME_2']
                             v_dist_col = next((c for c in possible_dist_cols if c in villages_gdf.columns), None)
                             
                             if v_dist_col:
@@ -336,6 +347,7 @@ def main():
                                 target_dist = str(selected_dist_map).lower().strip()
                                 local_villages = villages_gdf[villages_gdf['match_col'] == target_dist]
                                 
+                                # Fallback: Fuzzy Match
                                 if local_villages.empty:
                                     unique_dists = villages_gdf['match_col'].unique()
                                     v_match = difflib.get_close_matches(target_dist, unique_dists, n=1, cutoff=0.5)
@@ -346,9 +358,10 @@ def main():
                                     centroid = local_villages.geometry.centroid
                                     m = folium.Map(location=[centroid.y.mean(), centroid.x.mean()], zoom_start=10)
                                     
-                                    v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname'] if c in local_villages.columns), local_villages.columns[0])
+                                    # 2. FIND VILLAGE NAME COLUMN
+                                    v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in local_villages.columns), local_villages.columns[0])
 
-                                    # 1. VILLAGE LAYER
+                                    # 3. DRAW VILLAGES
                                     folium.GeoJson(
                                         local_villages,
                                         name="Villages",
@@ -357,42 +370,22 @@ def main():
                                         highlight_function=lambda x: {'weight': 3, 'color': 'red'}
                                     ).add_to(m)
 
-                                    # 2. OPTIMIZED RESOURCE LAYERS (No Loops = FASTER)
+                                    # 4. DRAW RESOURCES (Vectorized = Fast)
                                     if not district_resources.empty:
-                                        hospitals = district_resources[district_resources['amenity'].isin(['hospital', 'clinic', 'doctors'])]
-                                        schools = district_resources[district_resources['amenity'].isin(['school', 'kindergarten', 'college'])]
-                                        water = district_resources[district_resources['water'].notnull()]
+                                        hospitals = district_resources[district_resources['amenity'].isin(['hospital', 'clinic', 'doctors', 'health'])]
+                                        schools = district_resources[district_resources['amenity'].isin(['school', 'kindergarten', 'college', 'university'])]
+                                        water = district_resources[(district_resources['water'].notnull()) | (district_resources['natural'] == 'water')]
 
-                                        # FAST RENDER: WATER (Blue)
                                         if not water.empty:
-                                            folium.GeoJson(
-                                                water,
-                                                name="Water Bodies",
-                                                marker=folium.CircleMarker(radius=3, color='blue', fill_color='blue', fill_opacity=0.7),
-                                                tooltip="Water"
-                                            ).add_to(m)
-
-                                        # FAST RENDER: HEALTH (Red)
+                                            folium.GeoJson(water, name="Water Bodies", marker=folium.CircleMarker(radius=3, color='blue', fill_color='blue'), tooltip="Water").add_to(m)
                                         if not hospitals.empty:
-                                            folium.GeoJson(
-                                                hospitals,
-                                                name="Health Facilities",
-                                                marker=folium.CircleMarker(radius=5, color='red', fill_color='red', fill_opacity=0.7),
-                                                tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['Hospital:'])
-                                            ).add_to(m)
-
-                                        # FAST RENDER: SCHOOLS (Green)
+                                            folium.GeoJson(hospitals, name="Health", marker=folium.CircleMarker(radius=5, color='red', fill_color='red'), tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['Health:'])).add_to(m)
                                         if not schools.empty:
-                                            folium.GeoJson(
-                                                schools,
-                                                name="Education",
-                                                marker=folium.CircleMarker(radius=3, color='green', fill_color='green', fill_opacity=0.7),
-                                                tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['School:'])
-                                            ).add_to(m)
+                                            folium.GeoJson(schools, name="Education", marker=folium.CircleMarker(radius=3, color='green', fill_color='green'), tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['School:'])).add_to(m)
 
                                     map_out = st_folium(m, height=400, width=500)
                                     
-                                    # 3. FAST DRILL-DOWN (using .within instead of clip)
+                                    # 5. CLICK INTERACTION
                                     if map_out['last_active_drawing']:
                                         props = map_out['last_active_drawing']['properties']
                                         if props and v_name_col in props:
@@ -402,22 +395,13 @@ def main():
                                             clicked_geom = local_villages[local_villages[v_name_col].astype(str) == clicked_v]
                                             
                                             if not clicked_geom.empty and not district_resources.empty:
-                                                # --- OPTIMIZATION START ---
-                                                # Convert CRS only if needed
                                                 if district_resources.crs != clicked_geom.crs:
                                                     district_resources = district_resources.to_crs(clicked_geom.crs)
-                                                    
-                                                # Get polygon geometry
-                                                poly = clicked_geom.geometry.iloc[0]
                                                 
-                                                # 1. Filter by Bounding Box (Super fast pre-filter)
-                                                # Use spatial index to find candidate points
+                                                poly = clicked_geom.geometry.iloc[0]
                                                 possible_matches_index = list(district_resources.sindex.intersection(poly.bounds))
                                                 possible_matches = district_resources.iloc[possible_matches_index]
-                                                
-                                                # 2. Precise Point-in-Polygon Check (Fast boolean check)
                                                 amenities_inside = possible_matches[possible_matches.geometry.within(poly)]
-                                                # --- OPTIMIZATION END ---
                                                     
                                                 if not amenities_inside.empty:
                                                     display_cols = ['name', 'amenity', 'water']
@@ -441,11 +425,11 @@ def main():
                                     else:
                                         st.caption("👈 Click a village polygon to list its specific contents below.")
                                 else:
-                                    st.warning(f"District '{selected_dist_map}' found in Excel but NOT in Map.")
+                                    st.warning(f"District '{selected_dist_map}' found in Excel but NOT in Village Map.")
                             else:
                                 st.error("Map loaded but 'District' column is missing.")
                         else:
-                            st.error("Jharkhand Map (zip) not found in data/ folder.")
+                            st.error(f"{selected_state} Map (zip) not found in data/ folder.")
 
                 else:
                     if indicators is not None:
