@@ -100,12 +100,13 @@ def clean_gdf_for_map(gdf, name_col='name'):
 def load_village_map(state_name):
     clean_state = str(state_name).strip().upper()
     
-    # ADDED CHHATTISGARH & MADHYA PRADESH HERE
+    # MAPPING ALL 5 STATES TO THEIR OPTIMIZED FILES
     file_map = {
         "JHARKHAND": "jharkhand_villages_optimized.zip",
         "UTTAR PRADESH": "up_villages_optimized.zip",
+        "MADHYA PRADESH": "mp_villages_optimized.zip",
         "CHHATTISGARH": "cg_villages_optimized.zip",
-        "MADHYA PRADESH": "mp_villages_optimized.zip"
+        "ASSAM": "assam_villages_optimized.zip"
     }
     
     if clean_state in file_map:
@@ -206,8 +207,8 @@ def main():
     st.sidebar.header("📍 Location & Time")
     selected_state = st.sidebar.selectbox("Select State", list(data_map.keys()))
     
-    # UPDATED LIST TO INCLUDE CG & MP
-    advanced_states = ["JHARKHAND", "UTTAR PRADESH", "CHHATTISGARH", "MADHYA PRADESH"]
+    # LIST OF ADVANCED STATES
+    advanced_states = ["JHARKHAND", "UTTAR PRADESH", "MADHYA PRADESH", "CHHATTISGARH", "ASSAM"]
     is_advanced_mode = selected_state.strip().upper() in advanced_states
     
     if is_advanced_mode:
@@ -354,6 +355,7 @@ def main():
                         district_resources = load_district_resources(selected_dist_map)
                         
                         if villages_gdf is not None:
+                            # 1. FIND DISTRICT COLUMN
                             possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1', 'NAME_1', 'NAME_2']
                             v_dist_col = next((c for c in possible_dist_cols if c in villages_gdf.columns), None)
                             
@@ -362,6 +364,7 @@ def main():
                                 target_dist = str(selected_dist_map).lower().strip()
                                 local_villages = villages_gdf[villages_gdf['match_col'] == target_dist]
                                 
+                                # Fallback: Fuzzy Match
                                 if local_villages.empty:
                                     unique_dists = villages_gdf['match_col'].unique()
                                     v_match = difflib.get_close_matches(target_dist, unique_dists, n=1, cutoff=0.5)
@@ -372,8 +375,10 @@ def main():
                                     centroid = local_villages.geometry.centroid
                                     m = folium.Map(location=[centroid.y.mean(), centroid.x.mean()], zoom_start=10)
                                     
+                                    # 2. FIND VILLAGE NAME COLUMN
                                     v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in local_villages.columns), local_villages.columns[0])
 
+                                    # 3. DRAW VILLAGES
                                     folium.GeoJson(
                                         clean_gdf_for_map(local_villages, v_name_col),
                                         name="Villages",
@@ -382,30 +387,35 @@ def main():
                                         highlight_function=lambda x: {'weight': 3, 'color': 'red'}
                                     ).add_to(m)
 
+                                    # 4. DRAW RESOURCES (Vectorized & Sanitized)
                                     if not district_resources.empty:
                                         hospitals = district_resources[district_resources['amenity'].isin(['hospital', 'clinic', 'doctors', 'health'])]
                                         schools = district_resources[district_resources['amenity'].isin(['school', 'kindergarten', 'college', 'university'])]
                                         water = district_resources[(district_resources['water'].notnull()) | (district_resources['natural'] == 'water')]
 
                                         if not water.empty:
+                                            # Clean before mapping
+                                            water_clean = clean_gdf_for_map(water, 'name')
                                             folium.GeoJson(
-                                                clean_gdf_for_map(water, 'name'), 
+                                                water_clean, 
                                                 name="Water Bodies", 
                                                 marker=folium.CircleMarker(radius=3, color='blue', fill_color='blue'), 
                                                 tooltip="Water"
                                             ).add_to(m)
                                             
                                         if not hospitals.empty:
+                                            hosp_clean = clean_gdf_for_map(hospitals, 'name')
                                             folium.GeoJson(
-                                                clean_gdf_for_map(hospitals, 'name'), 
+                                                hosp_clean, 
                                                 name="Health", 
                                                 marker=folium.CircleMarker(radius=5, color='red', fill_color='red'), 
                                                 tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['Health:'])
                                             ).add_to(m)
                                             
                                         if not schools.empty:
+                                            school_clean = clean_gdf_for_map(schools, 'name')
                                             folium.GeoJson(
-                                                clean_gdf_for_map(schools, 'name'), 
+                                                school_clean, 
                                                 name="Education", 
                                                 marker=folium.CircleMarker(radius=3, color='green', fill_color='green'), 
                                                 tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['School:'])
@@ -413,6 +423,7 @@ def main():
 
                                     map_out = st_folium(m, height=400, width=500)
                                     
+                                    # 5. CLICK INTERACTION
                                     if map_out['last_active_drawing']:
                                         props = map_out['last_active_drawing']['properties']
                                         if props and v_name_col in props:
