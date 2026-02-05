@@ -106,7 +106,7 @@ def load_village_map(state_name):
         "UTTAR PRADESH": "up_villages_optimized.zip",
         "MADHYA PRADESH": "mp_villages_optimized.zip",
         "CHHATTISGARH": "cg_villages_optimized.zip",
-        "ASSAM": "assam_villages_optimized.zip"
+        "ASSAM": "assam_villages_optimized.zip"  # Added Assam here
     }
     
     if clean_state in file_map:
@@ -208,7 +208,7 @@ def main():
     selected_state = st.sidebar.selectbox("Select State", list(data_map.keys()))
     
     # LIST OF ADVANCED STATES
-    advanced_states = ["JHARKHAND", "UTTAR PRADESH", "MADHYA PRADESH", "CHHATTISGARH", "ASSAM"]
+    advanced_states = ["JHARKHAND", "UTTAR PRADESH", "MADHYA PRADESH", "CHHATTISGARH", "ASSAM"] # Added Assam here
     is_advanced_mode = selected_state.strip().upper() in advanced_states
     
     if is_advanced_mode:
