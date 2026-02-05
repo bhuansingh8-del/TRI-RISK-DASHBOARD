@@ -356,7 +356,7 @@ def main():
                         
                         if villages_gdf is not None:
                             # 1. FIND DISTRICT COLUMN
-                            possible_dist_cols = ['district', 'District', 'DISTRICT', 'dtname', 'dist_name', 'Name_1', 'NAME_1', 'NAME_2']
+                            possible_dist_cols = ['district', 'District', 'DISTRICT', 'DTNAME', 'dist_name', 'Name_1', 'NAME_1', 'NAME_2']
                             v_dist_col = next((c for c in possible_dist_cols if c in villages_gdf.columns), None)
                             
                             if v_dist_col:
@@ -495,3 +495,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
