@@ -114,6 +114,37 @@ def load_village_map(state_name):
         if os.path.exists(path):
             try:
                 gdf = gpd.read_file(path)
+                
+                # --- NEW CHHATTISGARH LGD LOGIC ---
+                if clean_state == "CHHATTISGARH":
+                    lgd_path = "data/cg_lgd_mapping.csv"
+                    # Find the map's village name column
+                    v_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in gdf.columns), None)
+                    
+                    if os.path.exists(lgd_path) and v_col:
+                        lgd_df = pd.read_csv(lgd_path)
+                        
+                        # Clean up column names in case of hidden spaces or newlines from Excel
+                        lgd_df.columns = lgd_df.columns.str.replace('\n', ' ').str.strip()
+                        
+                        # Identify the right columns based on the Excel layout
+                        name_col = 'Village Name (In English)' if 'Village Name (In English)' in lgd_df.columns else lgd_df.columns[6] 
+                        code_col = 'Village Code' if 'Village Code' in lgd_df.columns else lgd_df.columns[4]
+                        
+                        # Standardize for matching
+                        gdf['match_name'] = gdf[v_col].astype(str).str.upper().str.strip()
+                        lgd_df['match_name'] = lgd_df[name_col].astype(str).str.upper().str.strip()
+                        
+                        # Merge the LGD Codes
+                        gdf = gdf.merge(lgd_df[['match_name', code_col]], on='match_name', how='left')
+                        
+                        # Create new display column: use Code, fallback to Name if no match
+                        gdf['VILLAGE_DISPLAY'] = gdf[code_col].fillna(gdf[v_col]).astype(str)
+                    elif v_col:
+                        # Fallback if CSV is missing
+                        gdf['VILLAGE_DISPLAY'] = gdf[v_col]
+                # -----------------------------------
+
                 if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
                 return gdf
             except: return None
@@ -291,7 +322,7 @@ def main():
                 merged = state_gdf.merge(risk_df, left_on='CLEAN_MAP_NAME', right_on='MERGE_KEY', how='left')
                 merged['Display_Label'] = merged['Excel_District'].fillna(merged['CLEAN_MAP_NAME'])
                 merged['Risk Score'] = merged['Risk Score'].fillna(0)
-              
+               
                 fig = px.choropleth_mapbox(
                     merged, geojson=merged.geometry, locations=merged.index,
                     color='Risk Score', 
@@ -375,15 +406,18 @@ def main():
                                     centroid = local_villages.geometry.centroid
                                     m = folium.Map(location=[centroid.y.mean(), centroid.x.mean()], zoom_start=10)
                                     
-                                    # 2. FIND VILLAGE NAME COLUMN
-                                    v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in local_villages.columns), local_villages.columns[0])
+                                    # 2. FIND VILLAGE NAME COLUMN (Updated for LGD Codes)
+                                    if 'VILLAGE_DISPLAY' in local_villages.columns:
+                                        v_name_col = 'VILLAGE_DISPLAY'
+                                    else:
+                                        v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in local_villages.columns), local_villages.columns[0])
 
                                     # 3. DRAW VILLAGES
                                     folium.GeoJson(
                                         clean_gdf_for_map(local_villages, v_name_col),
                                         name="Villages",
                                         style_function=lambda x: {'fillColor': '#ffaf00', 'color': 'black', 'weight': 0.5, 'fillOpacity': 0.2},
-                                        tooltip=folium.GeoJsonTooltip(fields=[v_name_col], aliases=["Village:"]),
+                                        tooltip=folium.GeoJsonTooltip(fields=[v_name_col], aliases=["Village/LGD:"]),
                                         highlight_function=lambda x: {'weight': 3, 'color': 'red'}
                                     ).add_to(m)
 
@@ -495,5 +529,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
