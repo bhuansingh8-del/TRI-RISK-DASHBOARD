@@ -100,13 +100,12 @@ def clean_gdf_for_map(gdf, name_col='name'):
 def load_village_map(state_name):
     clean_state = str(state_name).strip().upper()
     
-    # MAPPING ALL 5 STATES TO THEIR OPTIMIZED FILES
     file_map = {
         "JHARKHAND": "jharkhand_villages_optimized.zip",
         "UTTAR PRADESH": "up_villages_optimized.zip",
         "MADHYA PRADESH": "mp_villages_optimized.zip",
         "CHHATTISGARH": "cg_villages_optimized.zip",
-        "ASSAM": "assam_villages_optimized.zip"  # Added Assam here
+        "ASSAM": "assam_villages_optimized.zip" 
     }
     
     if clean_state in file_map:
@@ -115,48 +114,54 @@ def load_village_map(state_name):
             try:
                 gdf = gpd.read_file(path)
                 
-                # --- NEW CHHATTISGARH LGD LOGIC ---
-               
-               # --- NEW CHHATTISGARH LGD LOGIC ---
+                # --- BULLETPROOF CHHATTISGARH LGD LOGIC ---
                 if clean_state == "CHHATTISGARH":
                     lgd_path = "data/cg_lgd_mapping.csv"
-                    # Find the map's village name column
                     v_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in gdf.columns), None)
                     
                     if os.path.exists(lgd_path) and v_col:
                         lgd_df = pd.read_csv(lgd_path)
                         lgd_df.columns = lgd_df.columns.str.replace('\n', ' ').str.strip()
                         
-                        # Identify columns
                         name_col = 'Village Name (In English)' if 'Village Name (In English)' in lgd_df.columns else lgd_df.columns[6] 
                         code_col = 'Village Code' if 'Village Code' in lgd_df.columns else lgd_df.columns[4]
                         
-                        # Standardize for matching
-                        gdf['match_name'] = gdf[v_col].astype(str).str.upper().str.strip()
-                        lgd_df['match_name'] = lgd_df[name_col].astype(str).str.upper().str.strip()
+                        # 1. The shapefile has numbers! Clean them up (remove .0)
+                        gdf['match_code'] = gdf[v_col].astype(str).str.replace('.0', '', regex=False).str.strip()
                         
-                        # Merge the LGD Codes
-                        gdf = gdf.merge(lgd_df[['match_name', code_col]], on='match_name', how='left')
+                        # 2. Clean the Excel codes for matching
+                        lgd_df['match_code'] = lgd_df[code_col].astype(str).str.replace('.0', '', regex=False).str.strip()
                         
-                        # 1. Clean the code (removes decimals and NaNs)
-                        gdf['clean_code'] = gdf[code_col].fillna(-1).astype(int).astype(str).replace('-1', '')
+                        # 3. Drop duplicates in Excel to prevent merging errors
+                        lgd_df = lgd_df.drop_duplicates(subset=['match_code'])
                         
-                        # 2. FORCE the format "Name (Code)"
+                        # 4. REVERSE LOOKUP: Merge on CODE to fetch the NAME
+                        gdf = gdf.merge(lgd_df[['match_code', name_col]], on='match_code', how='left')
+                        
+                        # 5. Create the beautiful "Name (Code)" format
                         display_list = []
                         for idx, row in gdf.iterrows():
-                            v_name = str(row[v_col]).title() # Capitalize nicely
-                            l_code = str(row['clean_code'])
-                            if l_code != '':
-                                display_list.append(f"{v_name} ({l_code})")
-                            else:
-                                display_list.append(v_name)
+                            # Get the fetched name (or 'Unknown' if not found in CSV)
+                            fetched_name = str(row[name_col]).title()
+                            if fetched_name == 'Nan': 
+                                fetched_name = "Unknown Village"
                                 
+                            v_code = str(row['match_code'])
+                            
+                            display_list.append(f"{fetched_name} ({v_code})")
+                            
                         gdf['VILLAGE_DISPLAY'] = display_list
 
                     elif v_col:
-                        # Fallback if CSV is missing
-                        gdf['VILLAGE_DISPLAY'] = gdf[v_col]
+                        gdf['VILLAGE_DISPLAY'] = gdf[v_col].astype(str)
                 # -----------------------------------
+
+                if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
+                return gdf
+            except Exception as e:
+                st.error(f"Error processing map: {e}")
+                return None
+    return None
                 # -----------------------------------
 
                 if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
@@ -543,5 +548,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
