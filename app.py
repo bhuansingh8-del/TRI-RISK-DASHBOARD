@@ -116,6 +116,8 @@ def load_village_map(state_name):
                 gdf = gpd.read_file(path)
                 
                 # --- NEW CHHATTISGARH LGD LOGIC ---
+               
+               # --- NEW CHHATTISGARH LGD LOGIC ---
                 if clean_state == "CHHATTISGARH":
                     lgd_path = "data/cg_lgd_mapping.csv"
                     # Find the map's village name column
@@ -123,11 +125,9 @@ def load_village_map(state_name):
                     
                     if os.path.exists(lgd_path) and v_col:
                         lgd_df = pd.read_csv(lgd_path)
-                        
-                        # Clean up column names in case of hidden spaces or newlines from Excel
                         lgd_df.columns = lgd_df.columns.str.replace('\n', ' ').str.strip()
                         
-                        # Identify the right columns based on the Excel layout
+                        # Identify columns
                         name_col = 'Village Name (In English)' if 'Village Name (In English)' in lgd_df.columns else lgd_df.columns[6] 
                         code_col = 'Village Code' if 'Village Code' in lgd_df.columns else lgd_df.columns[4]
                         
@@ -138,20 +138,25 @@ def load_village_map(state_name):
                         # Merge the LGD Codes
                         gdf = gdf.merge(lgd_df[['match_name', code_col]], on='match_name', how='left')
                         
-                        # Create new display column: use Code, fallback to Name if no match
-                       
-                        # 1. Remove the annoying ".0" by converting to integer first, then string
-                        gdf['clean_lgd'] = gdf[code_col].fillna(-1).astype(int).astype(str).replace('-1', '')
+                        # 1. Clean the code (removes decimals and NaNs)
+                        gdf['clean_code'] = gdf[code_col].fillna(-1).astype(int).astype(str).replace('-1', '')
                         
-                        # 2. Set the display to be the Village Name
-                        gdf['VILLAGE_DISPLAY'] = gdf[v_col].astype(str)
-                        
-                        # 3. Add the LGD code in parentheses ONLY if we found a match
-                        has_lgd = gdf['clean_lgd'] != ''
-                        gdf.loc[has_lgd, 'VILLAGE_DISPLAY'] = gdf.loc[has_lgd, v_col].astype(str) + " (" + gdf.loc[has_lgd, 'clean_lgd'] + ")"
+                        # 2. FORCE the format "Name (Code)"
+                        display_list = []
+                        for idx, row in gdf.iterrows():
+                            v_name = str(row[v_col]).title() # Capitalize nicely
+                            l_code = str(row['clean_code'])
+                            if l_code != '':
+                                display_list.append(f"{v_name} ({l_code})")
+                            else:
+                                display_list.append(v_name)
+                                
+                        gdf['VILLAGE_DISPLAY'] = display_list
+
                     elif v_col:
                         # Fallback if CSV is missing
                         gdf['VILLAGE_DISPLAY'] = gdf[v_col]
+                # -----------------------------------
                 # -----------------------------------
 
                 if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
@@ -538,4 +543,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
