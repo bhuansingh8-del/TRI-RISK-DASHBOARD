@@ -100,6 +100,7 @@ def clean_gdf_for_map(gdf, name_col='name'):
 def load_village_map(state_name):
     clean_state = str(state_name).strip().upper()
     
+    # MAPPING ALL 5 STATES TO THEIR OPTIMIZED FILES
     file_map = {
         "JHARKHAND": "jharkhand_villages_optimized.zip",
         "UTTAR PRADESH": "up_villages_optimized.zip",
@@ -156,19 +157,15 @@ def load_village_map(state_name):
                         gdf['VILLAGE_DISPLAY'] = gdf[v_col].astype(str)
                 # -----------------------------------
 
-                if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
+                if gdf.crs != "EPSG:4326": 
+                    gdf = gdf.to_crs("EPSG:4326")
                 return gdf
+            
             except Exception as e:
                 st.error(f"Error processing map: {e}")
                 return None
     return None
-                # -----------------------------------
-
-              if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
-                return gdf
-            except: return None
-    return None
-
+    
 @st.cache_data
 def load_district_resources(district_name):
     clean_dist = str(district_name).strip().replace(" ", "_")
@@ -548,6 +545,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
