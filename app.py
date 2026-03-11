@@ -122,33 +122,39 @@ def load_village_map(state_name):
                     
                     if os.path.exists(lgd_path) and v_col:
                         lgd_df = pd.read_csv(lgd_path)
-                        lgd_df.columns = lgd_df.columns.str.replace('\n', ' ').str.strip()
                         
-                        name_col = 'Village Name (In English)' if 'Village Name (In English)' in lgd_df.columns else lgd_df.columns[6] 
-                        code_col = 'Village Code' if 'Village Code' in lgd_df.columns else lgd_df.columns[4]
+                        # Fix messy Excel headers (removes newlines and extra spaces)
+                        lgd_df.columns = [" ".join(str(c).split()) for c in lgd_df.columns]
                         
-                        # 1. The shapefile has numbers! Clean them up (remove .0)
-                        gdf['match_code'] = gdf[v_col].astype(str).str.replace('.0', '', regex=False).str.strip()
+                        # SMART COLUMN FINDER (Based on your exact screenshot)
+                        code_col = next((c for c in lgd_df.columns if 'Village Code' in c), lgd_df.columns[5])
+                        name_col = next((c for c in lgd_df.columns if 'Village Name' in c and 'English' in c), lgd_df.columns[7])
                         
-                        # 2. Clean the Excel codes for matching
-                        lgd_df['match_code'] = lgd_df[code_col].astype(str).str.replace('.0', '', regex=False).str.strip()
+                        # 1. Clean the shapefile codes (removes .0)
+                        gdf['match_code'] = gdf[v_col].astype(str).str.split('.').str[0].str.strip()
                         
-                        # 3. Drop duplicates in Excel to prevent merging errors
+                        # 2. Clean the Excel codes 
+                        lgd_df['match_code'] = lgd_df[code_col].astype(str).str.split('.').str[0].str.strip()
+                        
+                        # 3. Drop duplicates to prevent merging errors
                         lgd_df = lgd_df.drop_duplicates(subset=['match_code'])
                         
                         # 4. REVERSE LOOKUP: Merge on CODE to fetch the NAME
                         gdf = gdf.merge(lgd_df[['match_code', name_col]], on='match_code', how='left')
                         
-                        # 5. Create the beautiful "Name (Code)" format
+                        # 5. Create the "Name (Code)" format
                         display_list = []
                         for idx, row in gdf.iterrows():
-                            # Get the fetched name (or 'Unknown' if not found in CSV)
-                            fetched_name = str(row[name_col]).title()
-                            if fetched_name == 'Nan': 
-                                fetched_name = "Unknown Village"
+                            # Check if the merge found a name
+                            fetched_name = str(row[name_col]).strip()
+                            
+                            # If it's missing or 'nan', use a fallback
+                            if fetched_name.lower() == 'nan' or not fetched_name:
+                                fetched_name = "Name Not in CSV"
+                            else:
+                                fetched_name = fetched_name.title()
                                 
                             v_code = str(row['match_code'])
-                            
                             display_list.append(f"{fetched_name} ({v_code})")
                             
                         gdf['VILLAGE_DISPLAY'] = display_list
@@ -545,6 +551,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
