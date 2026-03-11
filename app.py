@@ -139,7 +139,16 @@ def load_village_map(state_name):
                         gdf = gdf.merge(lgd_df[['match_name', code_col]], on='match_name', how='left')
                         
                         # Create new display column: use Code, fallback to Name if no match
-                        gdf['VILLAGE_DISPLAY'] = gdf[code_col].fillna(gdf[v_col]).astype(str)
+                       
+                        # 1. Remove the annoying ".0" by converting to integer first, then string
+                        gdf['clean_lgd'] = gdf[code_col].fillna(-1).astype(int).astype(str).replace('-1', '')
+                        
+                        # 2. Set the display to be the Village Name
+                        gdf['VILLAGE_DISPLAY'] = gdf[v_col].astype(str)
+                        
+                        # 3. Add the LGD code in parentheses ONLY if we found a match
+                        has_lgd = gdf['clean_lgd'] != ''
+                        gdf.loc[has_lgd, 'VILLAGE_DISPLAY'] = gdf.loc[has_lgd, v_col].astype(str) + " (" + gdf.loc[has_lgd, 'clean_lgd'] + ")"
                     elif v_col:
                         # Fallback if CSV is missing
                         gdf['VILLAGE_DISPLAY'] = gdf[v_col]
@@ -529,3 +538,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
