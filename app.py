@@ -121,14 +121,16 @@ def load_village_map(state_name):
                     v_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in gdf.columns), None)
                     
                     if os.path.exists(lgd_path) and v_col:
+                        # Read the CSV exactly as your diagnostic showed
                         lgd_df = pd.read_csv(lgd_path)
                         
-                        # Fix messy Excel headers (removes newlines and extra spaces)
-                        lgd_df.columns = [" ".join(str(c).split()) for c in lgd_df.columns]
+                        # CRITICAL FIX 1: Delete Row 0 (the row that just says "(In English)")
+                        lgd_df = lgd_df.iloc[1:].reset_index(drop=True)
                         
-                        # SMART COLUMN FINDER (Based on your exact screenshot)
-                        code_col = next((c for c in lgd_df.columns if 'Village Code' in c), lgd_df.columns[5])
-                        name_col = next((c for c in lgd_df.columns if 'Village Name' in c and 'English' in c), lgd_df.columns[7])
+                        # CRITICAL FIX 2: Use exact column index based on your diagnostic
+                        # Column 5 is 'Village Code', Column 7 is 'Village Name '
+                        code_col = lgd_df.columns[5] 
+                        name_col = lgd_df.columns[7]
                         
                         # 1. Clean the shapefile codes (removes .0)
                         gdf['match_code'] = gdf[v_col].astype(str).str.split('.').str[0].str.strip()
@@ -142,7 +144,7 @@ def load_village_map(state_name):
                         # 4. REVERSE LOOKUP: Merge on CODE to fetch the NAME
                         gdf = gdf.merge(lgd_df[['match_code', name_col]], on='match_code', how='left')
                         
-                        # 5. Create the "Name (Code)" format
+                        # 5. Create the beautiful "Name (Code)" format
                         display_list = []
                         for idx, row in gdf.iterrows():
                             # Check if the merge found a name
@@ -150,7 +152,7 @@ def load_village_map(state_name):
                             
                             # If it's missing or 'nan', use a fallback
                             if fetched_name.lower() == 'nan' or not fetched_name:
-                                fetched_name = "Name Not in CSV"
+                                fetched_name = "Unknown Village"
                             else:
                                 fetched_name = fetched_name.title()
                                 
@@ -551,6 +553,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
