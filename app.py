@@ -115,54 +115,35 @@ def load_village_map(state_name):
             try:
                 gdf = gpd.read_file(path)
                 
-                # --- BULLETPROOF CHHATTISGARH LGD LOGIC ---
+                # --- FAST CHHATTISGARH LGD LOGIC ---
                 if clean_state == "CHHATTISGARH":
-                    lgd_path = "data/cg_lgd_mapping.csv"
-                    v_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in gdf.columns), None)
+                    # Grab the real name and code columns hiding in your shapefile
+                    name_col = 'vilname11' if 'vilname11' in gdf.columns else 'vilnam_soi'
+                    code_col = 'vil_lgd' if 'vil_lgd' in gdf.columns else 'vilcode11'
                     
-                    if os.path.exists(lgd_path) and v_col:
-                        # Read the CSV exactly as your diagnostic showed
-                        lgd_df = pd.read_csv(lgd_path)
+                    display_list = []
+                    for idx, row in gdf.iterrows():
+                        # 1. Get the real text name
+                        v_name = str(row[name_col]).title()
+                        if v_name.lower() in ['nan', 'none', '']: 
+                            v_name = "Unknown Village"
                         
-                        # CRITICAL FIX 1: Delete Row 0 (the row that just says "(In English)")
-                        lgd_df = lgd_df.iloc[1:].reset_index(drop=True)
+                        # 2. Get the real LGD code (and strip the .0)
+                        v_code = str(row[code_col]).split('.')[0]
                         
-                        # CRITICAL FIX 2: Use exact column index based on your diagnostic
-                        # Column 5 is 'Village Code', Column 7 is 'Village Name '
-                        code_col = lgd_df.columns[5] 
-                        name_col = lgd_df.columns[7]
-                        
-                        # 1. Clean the shapefile codes (removes .0)
-                        gdf['match_code'] = gdf[v_col].astype(str).str.split('.').str[0].str.strip()
-                        
-                        # 2. Clean the Excel codes 
-                        lgd_df['match_code'] = lgd_df[code_col].astype(str).str.split('.').str[0].str.strip()
-                        
-                        # 3. Drop duplicates to prevent merging errors
-                        lgd_df = lgd_df.drop_duplicates(subset=['match_code'])
-                        
-                        # 4. REVERSE LOOKUP: Merge on CODE to fetch the NAME
-                        gdf = gdf.merge(lgd_df[['match_code', name_col]], on='match_code', how='left')
-                        
-                        # 5. Create the beautiful "Name (Code)" format
-                        display_list = []
-                        for idx, row in gdf.iterrows():
-                            # Check if the merge found a name
-                            fetched_name = str(row[name_col]).strip()
+                        # 3. Combine them
+                        if v_code.lower() not in ['nan', 'none', '']:
+                            display_list.append(f"{v_name} ({v_code})")
+                        else:
+                            display_list.append(v_name)
                             
-                            # If it's missing or 'nan', use a fallback
-                            if fetched_name.lower() == 'nan' or not fetched_name:
-                                fetched_name = "Unknown Village"
-                            else:
-                                fetched_name = fetched_name.title()
-                                
-                            v_code = str(row['match_code'])
-                            display_list.append(f"{fetched_name} ({v_code})")
-                            
-                        gdf['VILLAGE_DISPLAY'] = display_list
+                    gdf['VILLAGE_DISPLAY'] = display_list
 
-                    elif v_col:
-                        gdf['VILLAGE_DISPLAY'] = gdf[v_col].astype(str)
+                else:
+                    # Keep your original logic safe for Jharkhand and the others
+                    possible_cols = ['village', 'Name', 'NAME', 'vilname', 'Village_Name']
+                    v_col = next((c for c in possible_cols if c in gdf.columns), gdf.columns[0])
+                    gdf['VILLAGE_DISPLAY'] = gdf[v_col].astype(str)
                 # -----------------------------------
 
                 if gdf.crs != "EPSG:4326": 
@@ -553,6 +534,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
