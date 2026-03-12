@@ -413,6 +413,30 @@ def main():
                 narratives = generate_enhanced_narrative(r, curr_score, indicators)
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
+                # --- NEW GROUNDWATER TRENDS SECTION ---
+                st.markdown("---")
+                st.subheader(f"💧 Groundwater Depth Trends: {selected_dist_map}")
+
+                gw_df = load_groundwater_trends(selected_state, selected_dist_map)
+
+                if gw_df is not None and not gw_df.empty:
+                    try:
+                        pre_col = next((c for c in gw_df.columns if 'Pre-monsoon' in c), None)
+                        post_col = next((c for c in gw_df.columns if 'Post-monsoon' in c), None)
+                        
+                        if pre_col and post_col:
+                            plot_df = gw_df[['Year', pre_col, post_col]].set_index('Year')
+                            st.bar_chart(plot_df)
+                            st.caption("💡 Values in Meters Below Ground Level (m bgl). Taller bars indicate deeper water.")
+                        else:
+                            st.warning("Data found, but could not identify Pre/Post monsoon columns.")
+                            st.dataframe(gw_df)
+                    except Exception as e:
+                        st.error(f"Could not create chart: {e}")
+                else:
+                    st.info("No 10-year groundwater trends found in the local database.")
+                # --------------------------------------
+
                 if is_advanced_mode:
                     st.markdown("---")
                     st.markdown("### 🏘️ Village Amenities Drill-Down")
@@ -554,34 +578,6 @@ def main():
                             st.caption("Irrigation")
                             st.write(f"**{indicators.get('Irrigation_Coverage_Pct', 0):.1f}%**")
 
-    # --- GROUNDWATER TRENDS SECTION ---
-st.markdown("---")
-st.subheader(f"💧 Groundwater Depth Trends: {selected_district}")
-
-gw_df = load_groundwater_trends(selected_state, selected_district)
-
-if gw_df is not None and not gw_df.empty:
-    try:
-        # Prepare the data for the chart
-        # We look for the Pre and Post monsoon columns
-        pre_col = next((c for c in gw_df.columns if 'Pre-monsoon' in c), None)
-        post_col = next((c for c in gw_df.columns if 'Post-monsoon' in c), None)
-        
-        if pre_col and post_col:
-            plot_df = gw_df[['Year', pre_col, post_col]].set_index('Year')
-            
-            # Display the Bar Chart
-            st.bar_chart(plot_df)
-            
-            st.caption("💡 Note: Values are in Meters Below Ground Level (m bgl). Taller bars indicate deeper water levels (more scarcity).")
-        else:
-            st.warning("Found the data, but could not identify Pre/Post monsoon columns.")
-            st.dataframe(gw_df) # Fallback to showing the table
-            
-    except Exception as e:
-        st.error(f"Could not create chart: {e}")
-else:
-    st.info(f"No 10-year groundwater trends found for {selected_district} in the local database.")
 
     st.markdown("---")
     st.subheader(f"📈 52-Week Risk Trend: {clean_label(selected_dist_map) if selected_dist_map else ''}")
@@ -594,6 +590,7 @@ else:
 
 if __name__ == "__main__":
     main()
+
 
 
 
