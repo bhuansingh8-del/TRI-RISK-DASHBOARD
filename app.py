@@ -115,12 +115,15 @@ def load_village_map(state_name):
             try:
                 gdf = gpd.read_file(path)
                 
-                # --- UNIVERSAL LGD/CENSUS SMART SCANNER ---
-                # 1. Look for known LGD/Census code columns in the shapefile
-                code_col = next((c for c in ['vil_lgd', 'vilcode11', 'LGD_Code'] if c in gdf.columns), None)
+                # --- BULLETPROOF UNIVERSAL SCANNER ---
+                # 1. Convert all column names to lowercase to ignore capital letter differences
+                gdf.columns = gdf.columns.str.lower()
                 
-                # 2. Look for known Village Name columns
-                possible_names = ['vilname11', 'vilnam_soi', 'village', 'Name', 'NAME', 'Village_Name', 'vilname']
+                # 2. Look for known LGD/Census code columns
+                code_col = next((c for c in ['vil_lgd', 'vilcode11', 'lgd_code'] if c in gdf.columns), None)
+                
+                # 3. Look for known Village Name columns
+                possible_names = ['vilname11', 'vilnam_soi', 'village', 'name', 'village_name', 'vilname']
                 name_col = next((c for c in possible_names if c in gdf.columns), gdf.columns[0])
                 
                 display_list = []
@@ -128,13 +131,13 @@ def load_village_map(state_name):
                 for idx, row in gdf.iterrows():
                     # Format the text name nicely
                     v_name = str(row[name_col]).title()
-                    if v_name.lower() in ['nan', 'none', '', 'unknown']: 
+                    if v_name.lower() in ['nan', 'none', '', 'unknown', '0', '1']: 
                         v_name = "Unknown Village"
 
                     # If this shapefile has a code column, grab it and combine them
                     if code_col and pd.notna(row[code_col]):
                         v_code = str(row[code_col]).split('.')[0].strip()
-                        if v_code and v_code.lower() not in ['nan', 'none']:
+                        if v_code and v_code.lower() not in ['nan', 'none', '']:
                             display_list.append(f"{v_name} ({v_code})")
                         else:
                             display_list.append(v_name)
@@ -142,7 +145,7 @@ def load_village_map(state_name):
                         # If no code column exists, just use the name
                         display_list.append(v_name)
 
-                gdf['VILLAGE_DISPLAY'] = display_list
+                gdf['village_display'] = display_list
                 # -----------------------------------
 
                 if gdf.crs != "EPSG:4326": 
@@ -411,8 +414,8 @@ def main():
                                     m = folium.Map(location=[centroid.y.mean(), centroid.x.mean()], zoom_start=10)
                                     
                                     # 2. FIND VILLAGE NAME COLUMN (Updated for LGD Codes)
-                                    if 'VILLAGE_DISPLAY' in local_villages.columns:
-                                        v_name_col = 'VILLAGE_DISPLAY'
+                                    if 'village_display' in local_villages.columns:
+                                        v_name_col = 'village_display'
                                     else:
                                         v_name_col = next((c for c in ['village', 'Name', 'NAME', 'vilname', 'Village_Name'] if c in local_villages.columns), local_villages.columns[0])
 
@@ -533,6 +536,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
