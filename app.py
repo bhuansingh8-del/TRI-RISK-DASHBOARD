@@ -115,35 +115,34 @@ def load_village_map(state_name):
             try:
                 gdf = gpd.read_file(path)
                 
-                # --- FAST CHHATTISGARH LGD LOGIC ---
-                if clean_state == "CHHATTISGARH":
-                    # Grab the real name and code columns hiding in your shapefile
-                    name_col = 'vilname11' if 'vilname11' in gdf.columns else 'vilnam_soi'
-                    code_col = 'vil_lgd' if 'vil_lgd' in gdf.columns else 'vilcode11'
-                    
-                    display_list = []
-                    for idx, row in gdf.iterrows():
-                        # 1. Get the real text name
-                        v_name = str(row[name_col]).title()
-                        if v_name.lower() in ['nan', 'none', '']: 
-                            v_name = "Unknown Village"
-                        
-                        # 2. Get the real LGD code (and strip the .0)
-                        v_code = str(row[code_col]).split('.')[0]
-                        
-                        # 3. Combine them
-                        if v_code.lower() not in ['nan', 'none', '']:
+                # --- UNIVERSAL LGD/CENSUS SMART SCANNER ---
+                # 1. Look for known LGD/Census code columns in the shapefile
+                code_col = next((c for c in ['vil_lgd', 'vilcode11', 'LGD_Code'] if c in gdf.columns), None)
+                
+                # 2. Look for known Village Name columns
+                possible_names = ['vilname11', 'vilnam_soi', 'village', 'Name', 'NAME', 'Village_Name', 'vilname']
+                name_col = next((c for c in possible_names if c in gdf.columns), gdf.columns[0])
+                
+                display_list = []
+                
+                for idx, row in gdf.iterrows():
+                    # Format the text name nicely
+                    v_name = str(row[name_col]).title()
+                    if v_name.lower() in ['nan', 'none', '', 'unknown']: 
+                        v_name = "Unknown Village"
+
+                    # If this shapefile has a code column, grab it and combine them
+                    if code_col and pd.notna(row[code_col]):
+                        v_code = str(row[code_col]).split('.')[0].strip()
+                        if v_code and v_code.lower() not in ['nan', 'none']:
                             display_list.append(f"{v_name} ({v_code})")
                         else:
                             display_list.append(v_name)
-                            
-                    gdf['VILLAGE_DISPLAY'] = display_list
+                    else:
+                        # If no code column exists, just use the name
+                        display_list.append(v_name)
 
-                else:
-                    # Keep your original logic safe for Jharkhand and the others
-                    possible_cols = ['village', 'Name', 'NAME', 'vilname', 'Village_Name']
-                    v_col = next((c for c in possible_cols if c in gdf.columns), gdf.columns[0])
-                    gdf['VILLAGE_DISPLAY'] = gdf[v_col].astype(str)
+                gdf['VILLAGE_DISPLAY'] = display_list
                 # -----------------------------------
 
                 if gdf.crs != "EPSG:4326": 
@@ -151,7 +150,7 @@ def load_village_map(state_name):
                 return gdf
             
             except Exception as e:
-                st.error(f"Error processing map: {e}")
+                st.error(f"Error processing map for {state_name}: {e}")
                 return None
     return None
     
@@ -534,6 +533,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
