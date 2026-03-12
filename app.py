@@ -241,6 +241,40 @@ def main():
         st.error("🚨 No '_FINAL.xlsx' files found.")
         st.stop()
 
+import glob
+
+@st.cache_data
+def load_groundwater_data(state_name, district_name):
+    # This finds ALL excel files in the data folder starting with 'groundwater'
+    all_files = glob.glob("data/groundwater_*.xlsx")
+    
+    if not all_files:
+        return None
+        
+    try:
+        dataframes = []
+        for filename in all_files:
+            df = pd.read_excel(filename)
+            # Clean headers for this specific file
+            df.columns = [str(c).strip() for c in df.columns]
+            dataframes.append(df)
+        
+        # Merge all years into one master table
+        master_df = pd.concat(dataframes, axis=0, ignore_index=True)
+        
+        # Clean up any duplicate rows and sort by Year
+        master_df = master_df.drop_duplicates().sort_values(by='Year')
+        
+        # Apply the State and District filters
+        state_mask = master_df.iloc[:, 1].astype(str).str.upper() == state_name.upper()
+        dist_mask = master_df.iloc[:, 2].astype(str).str.upper() == district_name.upper()
+        
+        return master_df[state_mask & dist_mask]
+        
+    except Exception as e:
+        st.error(f"Error merging groundwater files: {e}")
+        return None
+    
     # --- SIDEBAR ---
     st.sidebar.header("📍 Location & Time")
     selected_state = st.sidebar.selectbox("Select State", list(data_map.keys()))
@@ -536,6 +570,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
