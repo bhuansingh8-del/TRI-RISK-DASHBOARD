@@ -57,11 +57,11 @@ def generate_enhanced_narrative(row, score, indicators):
     heat_val = row.get('Wet_Bulb', 0)
     
     if rain_val > 64.5:
-        narrative.append(f"<div class='explanation-box' style='border-left-color: #dc3545;'><strong>🔥 Severe Hazard (Trigger):</strong><br>Heavy rainfall of <b>{rain_val:.1f} mm</b> detected.</div>")
+        narrative.append(f"<div class='explanation-box' style='border-left-color: #dc3545;'><strong> Severe Hazard (Trigger):</strong><br>Heavy rainfall of <b>{rain_val:.1f} mm</b> detected.</div>")
     elif heat_val > 30:
-        narrative.append(f"<div class='explanation-box' style='border-left-color: #fd7e14;'><strong>🔥 Severe Hazard (Trigger):</strong><br>Dangerous Heat Stress (Wet Bulb: <b>{heat_val:.1f}°C</b>).</div>")
+        narrative.append(f"<div class='explanation-box' style='border-left-color: #fd7e14;'><strong> Severe Hazard (Trigger):</strong><br>Dangerous Heat Stress (Wet Bulb: <b>{heat_val:.1f}°C</b>).</div>")
     elif score < 30:
-        narrative.append(f"<div class='explanation-box' style='border-left-color: #28a745;'><strong>✅ Low Hazard:</strong><br>Normal conditions.</div>")
+        narrative.append(f"<div class='explanation-box' style='border-left-color: #28a745;'><strong> Low Hazard:</strong><br>Normal conditions.</div>")
 
     if indicators is not None and score > 40:
         kuccha = indicators.get('Kuccha_House_Pct', 0)
@@ -69,7 +69,7 @@ def generate_enhanced_narrative(row, score, indicators):
         vuln_text = ""
         if kuccha > 30: vuln_text += f"<li><b>{kuccha:.1f}% Kuccha Houses</b>.</li>"
         if farmers > 50: vuln_text += f"<li><b>{farmers:.1f}% Farmer Workforce</b>.</li>"
-        if vuln_text: narrative.append(f"<div class='explanation-box' style='border-left-color: #ffc107;'><strong>⚠️ Vulnerability:</strong><ul>{vuln_text}</ul></div>")
+        if vuln_text: narrative.append(f"<div class='explanation-box' style='border-left-color: #ffc107;'><strong> Vulnerability:</strong><ul>{vuln_text}</ul></div>")
 
     if indicators is not None and score > 60:
         mobile = indicators.get('Mobile_Coverage_Pct', 0)
@@ -77,7 +77,7 @@ def generate_enhanced_narrative(row, score, indicators):
         coping_text = ""
         if mobile < 70: coping_text += f"<li><b>Low Mobile Coverage ({mobile:.1f}%)</b>.</li>"
         if irrigation < 30: coping_text += f"<li><b>Low Irrigation ({irrigation:.1f}%)</b>.</li>"
-        if coping_text: narrative.append(f"<div class='explanation-box' style='border-left-color: #17a2b8;'><strong>🛡️ Coping Gap:</strong><ul>{coping_text}</ul></div>")
+        if coping_text: narrative.append(f"<div class='explanation-box' style='border-left-color: #17a2b8;'><strong> Coping Gap:</strong><ul>{coping_text}</ul></div>")
             
     return narrative
 
@@ -235,7 +235,7 @@ def main():
     col_logo, col_title = st.columns([1, 5])
     with col_logo:
         if os.path.exists("TRI-logo.png"): st.image("TRI-logo.png", width=200)
-        else: st.markdown("# 🛡️")
+        else: st.markdown(" ")
     with col_title:
         st.title("TRI Climate Risk Decision Support System")
         st.markdown("### Integrated Hazard, Vulnerability & Coping Capacity Assessment")
@@ -258,9 +258,9 @@ def main():
     is_advanced_mode = selected_state.strip().upper() in advanced_states
     
     if is_advanced_mode:
-        st.sidebar.success(f"✅ {selected_state}: Advanced Mode Active")
+        st.sidebar.success(f" {selected_state}: Advanced Mode Active")
     else:
-        st.sidebar.info("ℹ️ Standard Mode Active")
+        st.sidebar.info(" Standard Mode Active")
 
     state_data = data_map[selected_state]
     district_list = list(state_data.keys()) 
@@ -274,7 +274,7 @@ def main():
     
     selected_date = datetime(year, month, day)
     target_week = selected_date.isocalendar().week
-    st.sidebar.info(f"📅 **Selected:** {selected_date.strftime('%d %b %Y')}\n\n📊 **Week:** {target_week}")
+    st.sidebar.info(f" **Selected:** {selected_date.strftime('%d %b %Y')}\n\n **Week:** {target_week}")
 
     risk_type = st.sidebar.radio("Visualize Risk:", ["Extreme_Rain_Prob_%", "Heat_Prob_%"], format_func=clean_label)
     clean_risk_name = clean_label(risk_type)
@@ -293,7 +293,7 @@ def main():
     col_map, col_details = st.columns([1.8, 1.2])
     
     with col_map:
-        st.subheader(f"🗺️ State Risk Map: {clean_risk_name}")
+        st.subheader(f" State Risk Map: {clean_risk_name}")
         gdf = load_shapefile()
         
         if gdf is not None and not risk_df.empty:
@@ -367,7 +367,7 @@ def main():
                 st.warning(f"Could not match state '{selected_state}' in shapefile.")
 
     with col_details:
-        st.subheader("🧐 Detailed Risk Diagnostics")
+        st.subheader(" Detailed Risk Diagnostics")
         
         default_index = 0
         if st.session_state.selected_district_click in district_list:
@@ -388,7 +388,7 @@ def main():
                           delta="Critical" if curr_score > 80 else "Normal", delta_color="inverse")
                 st.markdown("---")
                 
-                st.markdown("### 📝 Impact Analysis")
+                st.markdown("###  Impact Analysis")
                 narratives = generate_enhanced_narrative(r, curr_score, indicators)
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
@@ -397,7 +397,7 @@ def main():
                 # ==============================================================
                 if is_advanced_mode:
                     st.markdown("---")
-                    st.markdown("### 🏘️ Village Amenities Drill-Down")
+                    st.markdown("### Village Amenities Drill-Down")
                     
                     with st.spinner(f"Loading Village Data & Resources for {selected_dist_map}..."):
                         villages_gdf = load_village_map(selected_state)
@@ -522,9 +522,9 @@ def main():
                                                     w_count = len(amenities_inside[amenities_inside['water'].notnull()])
                                                     
                                                     c1, c2, c3 = st.columns(3)
-                                                    c1.metric("🏥 Health", h_count)
-                                                    c2.metric("🏫 Education", s_count)
-                                                    c3.metric("💧 Water", w_count)
+                                                    c1.metric(" Health", h_count)
+                                                    c2.metric(" Education", s_count)
+                                                    c3.metric(" Water", w_count)
                                                 else:
                                                     st.warning("No amenities found inside this village boundary.")
                                             else:
@@ -540,7 +540,7 @@ def main():
 
                 else:
                     if indicators is not None:
-                        st.markdown("#### 📊 District Profile")
+                        st.markdown("####  District Profile")
                         i_col1, i_col2 = st.columns(2)
                         with i_col1:
                             st.caption("Kuccha Houses")
@@ -557,7 +557,7 @@ def main():
                 # SHIFTED GROUNDWATER SECTION (NOW WITH BAR GRAPH)
                 # ==============================================================
                 st.markdown("---")
-                st.subheader(f"💧 Groundwater Depth Trends: {selected_dist_map}")
+                st.subheader(f" Groundwater Depth Trends: {selected_dist_map}")
 
                 gw_df = load_groundwater_trends(selected_state, selected_dist_map)
 
@@ -601,7 +601,7 @@ def main():
                             )
                             
                             st.plotly_chart(fig_gw, use_container_width=True)
-                            st.caption("💡 Taller bars indicate deeper water levels. Hover over bars to see exact reported ranges.")
+                            st.caption(" Taller bars indicate deeper water levels. Hover over bars to see exact reported ranges.")
                             
                         else:
                             # Fallback for numerical columns
@@ -611,7 +611,7 @@ def main():
                             if pre_col and post_col:
                                 plot_df = gw_df[['Year', pre_col, post_col]].set_index('Year')
                                 st.bar_chart(plot_df)
-                                st.caption("💡 Values in Meters Below Ground Level (m bgl). Taller bars indicate deeper water.")
+                                st.caption(" Values in Meters Below Ground Level (m bgl). Taller bars indicate deeper water.")
                             else:
                                 st.warning("Data format unrecognized. Displaying raw table.")
                                 st.dataframe(gw_df, hide_index=True, use_container_width=True)
@@ -623,7 +623,7 @@ def main():
                 # ==============================================================
 
     st.markdown("---")
-    st.subheader(f"📈 52-Week Risk Trend: {clean_label(selected_dist_map) if selected_dist_map else ''}")
+    st.subheader(f" 52-Week Risk Trend: {clean_label(selected_dist_map) if selected_dist_map else ''}")
     if selected_dist_map:
         trend_df = state_data[selected_dist_map]
         fig_line = px.line(trend_df, x='Week', y=risk_type, markers=True, title=f"Annual Risk Profile: {selected_dist_map}")
