@@ -399,18 +399,47 @@ def main():
 
                 if gw_df is not None and not gw_df.empty:
                     try:
-                        pre_col = next((c for c in gw_df.columns if 'Pre-monsoon' in c), None)
-                        post_col = next((c for c in gw_df.columns if 'Post-monsoon' in c), None)
-                        
-                        if pre_col and post_col:
-                            plot_df = gw_df[['Year', pre_col, post_col]].set_index('Year')
-                            st.bar_chart(plot_df)
-                            st.caption("💡 Values in Meters Below Ground Level (m bgl). Taller bars indicate deeper water.")
+                        # 1. Detect the categorical format shown in your image
+                        if 'Water Level' in gw_df.columns:
+                            df_clean = gw_df[['Year', 'Water Level']].copy()
+                            
+                            # 2. Extract the Season into a new column
+                            df_clean['Season'] = df_clean['Water Level'].apply(
+                                lambda x: 'Pre-Monsoon' if 'Pre' in str(x) else ('Post-Monsoon' if 'Post' in str(x) else 'Other')
+                            )
+                            
+                            # 3. Clean the text to just show the range numbers (removes the repetitive text)
+                            df_clean['Depth (mbgl)'] = df_clean['Water Level'].str.replace(r'(?i)\s*(pre|post)\s*monsoon\s*\(in mbgl\)', '', regex=True).str.strip()
+                            
+                            # 4. Pivot the table so Pre and Post are side-by-side per year
+                            pivot_table = df_clean.pivot_table(index='Year', columns='Season', values='Depth (mbgl)', aggfunc='first').reset_index()
+                            
+                            # 5. Ensure the column order looks logical
+                            cols = ['Year']
+                            if 'Pre-Monsoon' in pivot_table.columns: cols.append('Pre-Monsoon')
+                            if 'Post-Monsoon' in pivot_table.columns: cols.append('Post-Monsoon')
+                            pivot_table = pivot_table[cols]
+                            
+                            # 6. Display the clean table
+                            st.success(f"✅ Historical Depth Ranges for {selected_dist_map}")
+                            st.dataframe(pivot_table, hide_index=True, use_container_width=True)
+                            st.caption("💡 Values represent depth ranges in Meters Below Ground Level (mbgl).")
+                            
                         else:
-                            st.warning("Data found, but could not identify Pre/Post monsoon columns.")
-                            st.dataframe(gw_df)
+                            # Fallback just in case other states have the old numerical format
+                            pre_col = next((c for c in gw_df.columns if 'Pre-monsoon' in c), None)
+                            post_col = next((c for c in gw_df.columns if 'Post-monsoon' in c), None)
+                            
+                            if pre_col and post_col:
+                                plot_df = gw_df[['Year', pre_col, post_col]].set_index('Year')
+                                st.bar_chart(plot_df)
+                                st.caption("💡 Values in Meters Below Ground Level (m bgl). Taller bars indicate deeper water.")
+                            else:
+                                st.warning("Data found, but format is unrecognized.")
+                                st.dataframe(gw_df, hide_index=True, use_container_width=True)
+                                
                     except Exception as e:
-                        st.error(f"Could not create chart: {e}")
+                        st.error(f"Could not process table: {e}")
                 else:
                     st.info("No 10-year groundwater trends found in the local database.")
 
