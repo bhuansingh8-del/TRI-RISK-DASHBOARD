@@ -10,6 +10,7 @@ import folium
 from folium import JsCode
 from streamlit_folium import st_folium
 from datetime import datetime, timedelta
+import re # Added for parsing groundwater text ranges
 
 # 1. Suppress Warnings
 warnings.filterwarnings("ignore")
@@ -80,7 +81,6 @@ def generate_enhanced_narrative(row, score, indicators):
             
     return narrative
 
-# ================= FIXED MAP CLEANER =================
 def clean_gdf_for_map(gdf, name_col='name'):
     cols_to_keep = ['geometry']
     if name_col in gdf.columns:
@@ -392,57 +392,9 @@ def main():
                 narratives = generate_enhanced_narrative(r, curr_score, indicators)
                 for n in narratives: st.markdown(n, unsafe_allow_html=True)
 
-                st.markdown("---")
-                st.subheader(f"💧 Groundwater Depth Trends: {selected_dist_map}")
-
-                gw_df = load_groundwater_trends(selected_state, selected_dist_map)
-
-                if gw_df is not None and not gw_df.empty:
-                    try:
-                        # 1. Detect the categorical format shown in your image
-                        if 'Water Level' in gw_df.columns:
-                            df_clean = gw_df[['Year', 'Water Level']].copy()
-                            
-                            # 2. Extract the Season into a new column
-                            df_clean['Season'] = df_clean['Water Level'].apply(
-                                lambda x: 'Pre-Monsoon' if 'Pre' in str(x) else ('Post-Monsoon' if 'Post' in str(x) else 'Other')
-                            )
-                            
-                            # 3. Clean the text to just show the range numbers (removes the repetitive text)
-                            df_clean['Depth (mbgl)'] = df_clean['Water Level'].str.replace(r'(?i)\s*(pre|post)\s*monsoon\s*\(in mbgl\)', '', regex=True).str.strip()
-                            
-                            # 4. Pivot the table so Pre and Post are side-by-side per year
-                            pivot_table = df_clean.pivot_table(index='Year', columns='Season', values='Depth (mbgl)', aggfunc='first').reset_index()
-                            
-                            # 5. Ensure the column order looks logical
-                            cols = ['Year']
-                            if 'Pre-Monsoon' in pivot_table.columns: cols.append('Pre-Monsoon')
-                            if 'Post-Monsoon' in pivot_table.columns: cols.append('Post-Monsoon')
-                            pivot_table = pivot_table[cols]
-                            
-                            # 6. Display the clean table
-                            st.success(f"✅ Historical Depth Ranges for {selected_dist_map}")
-                            st.dataframe(pivot_table, hide_index=True, use_container_width=True)
-                            st.caption("💡 Values represent depth ranges in Meters Below Ground Level (mbgl).")
-                            
-                        else:
-                            # Fallback just in case other states have the old numerical format
-                            pre_col = next((c for c in gw_df.columns if 'Pre-monsoon' in c), None)
-                            post_col = next((c for c in gw_df.columns if 'Post-monsoon' in c), None)
-                            
-                            if pre_col and post_col:
-                                plot_df = gw_df[['Year', pre_col, post_col]].set_index('Year')
-                                st.bar_chart(plot_df)
-                                st.caption("💡 Values in Meters Below Ground Level (m bgl). Taller bars indicate deeper water.")
-                            else:
-                                st.warning("Data found, but format is unrecognized.")
-                                st.dataframe(gw_df, hide_index=True, use_container_width=True)
-                                
-                    except Exception as e:
-                        st.error(f"Could not process table: {e}")
-                else:
-                    st.info("No 10-year groundwater trends found in the local database.")
-
+                # ==============================================================
+                # VILLAGE AMENITIES NOW APPEARS FIRST
+                # ==============================================================
                 if is_advanced_mode:
                     st.markdown("---")
                     st.markdown("### 🏘️ Village Amenities Drill-Down")
@@ -516,15 +468,10 @@ def main():
                                                 tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['School:'])
                                             ).add_to(m)
 
-                                    # ====================================================
-                                    # THE FIX: Bulletproof Spatial Filter (Bounding Box)
-                                    # ====================================================
                                     if not master_health_gdf.empty:
-                                        # Ensure CRS is identical before filtering
                                         if master_health_gdf.crs != local_villages.crs:
                                             master_health_gdf = master_health_gdf.to_crs(local_villages.crs)
                                         
-                                        # Use a bounding box (.cx) instead of .clip() to ignore geometry errors
                                         minx, miny, maxx, maxy = local_villages.total_bounds
                                         local_health_facilities = master_health_gdf.cx[minx:maxx, miny:maxy]
                                         
@@ -543,7 +490,6 @@ def main():
                                                 ).add_to(m)
                                             except Exception as e:
                                                 st.error(f"Error drawing health markers: {e}")
-                                    # ====================================================
 
                                     map_out = st_folium(m, height=400, width=500)
                                     
@@ -606,6 +552,75 @@ def main():
                             st.write(f"**{indicators.get('Mobile_Coverage_Pct', 0):.1f}%**")
                             st.caption("Irrigation")
                             st.write(f"**{indicators.get('Irrigation_Coverage_Pct', 0):.1f}%**")
+
+                # ==============================================================
+                # SHIFTED GROUNDWATER SECTION (NOW WITH BAR GRAPH)
+                # ==============================================================
+                st.markdown("---")
+                st.subheader(f"💧 Groundwater Depth Trends: {selected_dist_map}")
+
+                gw_df = load_groundwater_trends(selected_state, selected_dist_map)
+
+                if gw_df is not None and not gw_df.empty:
+                    try:
+                        if 'Water Level' in gw_df.columns:
+                            df_clean = gw_df[['Year', 'Water Level']].copy()
+                            
+                            # Identify Season
+                            df_clean['Season'] = df_clean['Water Level'].apply(
+                                lambda x: 'Pre-Monsoon' if 'Pre' in str(x) else ('Post-Monsoon' if 'Post' in str(x) else 'Other')
+                            )
+                            
+                            # Extract clean text range for hovering
+                            df_clean['Range'] = df_clean['Water Level'].str.replace(r'(?i)\s*(pre|post)\s*monsoon\s*\(in mbgl\)', '', regex=True).str.strip()
+                            
+                            # Function to calculate the midpoint of the text range for the bar chart height
+                            def get_midpoint(val):
+                                nums = re.findall(r'\d+\.?\d*', str(val))
+                                if len(nums) >= 2: return (float(nums[0]) + float(nums[1])) / 2.0
+                                elif len(nums) == 1: return float(nums[0])
+                                return 0.0
+                                
+                            df_clean['Depth_Midpoint'] = df_clean['Range'].apply(get_midpoint)
+                            
+                            # Plot the grouped bar chart
+                            fig_gw = px.bar(
+                                df_clean, 
+                                x='Year', 
+                                y='Depth_Midpoint', 
+                                color='Season', 
+                                barmode='group',
+                                color_discrete_map={'Pre-Monsoon': '#EF553B', 'Post-Monsoon': '#00CC96'}, # Red for Pre (dry), Green for Post (wet)
+                                hover_data={'Range': True, 'Depth_Midpoint': False},
+                                labels={'Depth_Midpoint': 'Avg Depth (mbgl)', 'Year': 'Observation Year'}
+                            )
+                            
+                            fig_gw.update_layout(
+                                legend_title_text='Season',
+                                margin=dict(l=0, r=0, t=30, b=0)
+                            )
+                            
+                            st.plotly_chart(fig_gw, use_container_width=True)
+                            st.caption("💡 Taller bars indicate deeper water levels. Hover over bars to see exact reported ranges.")
+                            
+                        else:
+                            # Fallback for numerical columns
+                            pre_col = next((c for c in gw_df.columns if 'Pre-monsoon' in c), None)
+                            post_col = next((c for c in gw_df.columns if 'Post-monsoon' in c), None)
+                            
+                            if pre_col and post_col:
+                                plot_df = gw_df[['Year', pre_col, post_col]].set_index('Year')
+                                st.bar_chart(plot_df)
+                                st.caption("💡 Values in Meters Below Ground Level (m bgl). Taller bars indicate deeper water.")
+                            else:
+                                st.warning("Data format unrecognized. Displaying raw table.")
+                                st.dataframe(gw_df, hide_index=True, use_container_width=True)
+                                
+                    except Exception as e:
+                        st.error(f"Could not process groundwater chart: {e}")
+                else:
+                    st.info("No 10-year groundwater trends found in the local database.")
+                # ==============================================================
 
     st.markdown("---")
     st.subheader(f"📈 52-Week Risk Trend: {clean_label(selected_dist_map) if selected_dist_map else ''}")
