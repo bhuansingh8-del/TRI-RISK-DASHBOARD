@@ -82,10 +82,6 @@ def generate_enhanced_narrative(row, score, indicators):
 
 # ================= FIXED MAP CLEANER =================
 def clean_gdf_for_map(gdf, name_col='name'):
-    """
-    Sanitizes GeoDataFrame before Folium plotting.
-    Removes timestamps/objects that cause JSON errors.
-    """
     cols_to_keep = ['geometry']
     if name_col in gdf.columns:
         cols_to_keep.append(name_col)
@@ -99,7 +95,6 @@ def clean_gdf_for_map(gdf, name_col='name'):
 @st.cache_data
 def load_village_map(state_name):
     clean_state = str(state_name).strip().upper()
-    
     file_map = {
         "JHARKHAND": "jharkhand_villages_optimized.zip",
         "UTTAR PRADESH": "up_villages_optimized.zip",
@@ -107,7 +102,6 @@ def load_village_map(state_name):
         "CHHATTISGARH": "cg_villages_optimized.zip",
         "ASSAM": "assam_villages_optimized.zip" 
     }
-    
     if clean_state in file_map:
         path = f"data/{file_map[clean_state]}"
         if os.path.exists(path):
@@ -137,7 +131,6 @@ def load_village_map(state_name):
                 gdf['village_display'] = display_list
                 if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
                 return gdf
-            
             except Exception as e:
                 st.error(f"Error processing map for {state_name}: {e}")
                 return None
@@ -150,13 +143,10 @@ def load_groundwater_trends(state_name, district_name):
         try:
             df = pd.read_excel(path)
             df.columns = [" ".join(str(c).split()) for c in df.columns]
-            
             state_col = df.columns[1]
             dist_col = df.columns[2]
-            
             mask = (df[state_col].astype(str).str.upper() == state_name.upper()) & \
                    (df[dist_col].astype(str).str.upper() == district_name.upper())
-            
             filtered_df = df[mask].copy()
             if not filtered_df.empty:
                 filtered_df = filtered_df.sort_values('Year')
@@ -175,38 +165,30 @@ def load_district_resources(district_name):
         f"raw_resources/{clean_dist}_District_resources.geojson"
     ]
     all_files = glob.glob("raw_resources/*.geojson")
-    
     target_file = None
     for p in patterns:
         if os.path.exists(p):
             target_file = p
             break
-            
     if not target_file:
         for f in all_files:
             if clean_dist.lower() in f.lower():
                 target_file = f
                 break
-                
     if target_file:
         try:
             gdf = gpd.read_file(target_file)
             if gdf.crs != "EPSG:4326": gdf = gdf.to_crs("EPSG:4326")
             return gdf
         except: return gpd.GeoDataFrame()
-        
     return gpd.GeoDataFrame()
 
-# === UPDATED: LOADER FOR ZIPPED GEOJSON ===
 @st.cache_data
 def load_health_facilities():
-    # Point to the new ZIP file
     path = "data/health_facilities.zip" 
     if os.path.exists(path):
         try:
-            # The 'zip://' prefix tells GeoPandas to open the zip and read the file inside
             gdf = gpd.read_file(f"zip://{path}")
-            
             if gdf.crs != "EPSG:4326":
                 gdf = gdf.to_crs("EPSG:4326")
             return gdf
@@ -214,7 +196,6 @@ def load_health_facilities():
             st.error(f"Error loading health facilities: {e}")
             return gpd.GeoDataFrame()
     return gpd.GeoDataFrame()
-# ===============================================
 
 @st.cache_data
 def load_data():
@@ -440,7 +421,6 @@ def main():
                     with st.spinner(f"Loading Village Data & Resources for {selected_dist_map}..."):
                         villages_gdf = load_village_map(selected_state)
                         district_resources = load_district_resources(selected_dist_map)
-                        
                         master_health_gdf = load_health_facilities()
                         
                         if villages_gdf is not None:
@@ -507,20 +487,34 @@ def main():
                                                 tooltip=folium.GeoJsonTooltip(fields=['name'], aliases=['School:'])
                                             ).add_to(m)
 
+                                    # ====================================================
+                                    # THE FIX: Bulletproof Spatial Filter (Bounding Box)
+                                    # ====================================================
                                     if not master_health_gdf.empty:
-                                        local_health_facilities = gpd.clip(master_health_gdf, local_villages.unary_union)
+                                        # Ensure CRS is identical before filtering
+                                        if master_health_gdf.crs != local_villages.crs:
+                                            master_health_gdf = master_health_gdf.to_crs(local_villages.crs)
+                                        
+                                        # Use a bounding box (.cx) instead of .clip() to ignore geometry errors
+                                        minx, miny, maxx, maxy = local_villages.total_bounds
+                                        local_health_facilities = master_health_gdf.cx[minx:maxx, miny:maxy]
                                         
                                         if not local_health_facilities.empty:
-                                            h_name_col = next((c for c in ['Facility_Name', 'name', 'Name', 'PHC_Name'] if c in local_health_facilities.columns), local_health_facilities.columns[0])
+                                            h_cols = ['Facility_Name', 'name', 'Name', 'PHC_Name', 'facility_name', 'HWC_Name']
+                                            h_name_col = next((c for c in h_cols if c in local_health_facilities.columns), local_health_facilities.columns[0])
                                             
                                             health_clean = clean_gdf_for_map(local_health_facilities, h_name_col)
                                             
-                                            folium.GeoJson(
-                                                health_clean,
-                                                name="Govt Health Facilities (NIN)",
-                                                marker=folium.CircleMarker(radius=6, color='purple', fill_color='purple', fill_opacity=0.8),
-                                                tooltip=folium.GeoJsonTooltip(fields=[h_name_col], aliases=['Govt Facility:'])
-                                            ).add_to(m)
+                                            try:
+                                                folium.GeoJson(
+                                                    health_clean,
+                                                    name="Govt Health Facilities (NIN)",
+                                                    marker=folium.CircleMarker(radius=5, color='#800080', fill_color='#800080', fill_opacity=0.9, weight=1),
+                                                    tooltip=folium.GeoJsonTooltip(fields=[h_name_col], aliases=['Govt Facility:'])
+                                                ).add_to(m)
+                                            except Exception as e:
+                                                st.error(f"Error drawing health markers: {e}")
+                                    # ====================================================
 
                                     map_out = st_folium(m, height=400, width=500)
                                     
